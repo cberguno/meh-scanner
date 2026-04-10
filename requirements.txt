@@ -1,0 +1,8 @@
+playwright
+anthropic
+google-api-python-client
+google-auth
+google-auth-oauthlib
+python-dotenv
+pandas
+requests
