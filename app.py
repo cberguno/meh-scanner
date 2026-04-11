@@ -307,8 +307,10 @@ app = FastAPI(title="Meh-Scanner Dashboard", lifespan=lifespan)
 
 def _missing_keys() -> list[str]:
     return [k for k, v in [
-        ("SERPER_API_KEY",    Config.SERPER_API_KEY),
-        ("ANTHROPIC_API_KEY", Config.ANTHROPIC_API_KEY),
+        ("SERPER_API_KEY",             Config.SERPER_API_KEY),
+        ("ANTHROPIC_API_KEY",          Config.ANTHROPIC_API_KEY),
+        ("GOOGLE_SHEET_ID",            Config.GOOGLE_SHEET_ID),
+        ("GOOGLE_SERVICE_ACCOUNT_JSON", Config.GOOGLE_SERVICE_ACCOUNT_JSON),
     ] if not v]
 
 

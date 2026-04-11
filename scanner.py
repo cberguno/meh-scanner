@@ -10,6 +10,7 @@ import time
 from affiliate import apply_affiliate_url
 from alerts import check_and_fire_alerts
 from analyzer import analyze_sites_batch
+from sheets import append_deals
 from config import Config
 from dashboard_export import export_daily_dashboard
 from db import record_source_visit
@@ -101,6 +102,12 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
         except Exception:
             score = 0
         record_source_visit(url, deal_found=url in deal_urls, deal_score=float(score))
+
+    # ── Phase 3d: write to Google Sheet ─────────────────────────────────────
+    try:
+        append_deals(deals)
+    except Exception as exc:
+        logger.error("sheets_unexpected", f"Unexpected error writing to sheet: {exc}", error=str(exc))
 
     # ── Phase 4: export dashboard ────────────────────────────────────────────
     runtime = time.time() - start

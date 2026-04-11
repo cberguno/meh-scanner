@@ -1,88 +1,154 @@
-import os
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
-import pandas as pd
+"""
+Google Sheets integration for meh-scanner.
+
+Authentication: service account JSON stored in GOOGLE_SERVICE_ACCOUNT_JSON env var.
+Accepts either a raw JSON string or a base64-encoded JSON string.
+
+The service account must be shared as an Editor on the target spreadsheet.
+Tab name: "Deals"  (create manually if it doesn't exist)
+"""
+import base64
+import json
 from datetime import datetime
-from dotenv import load_dotenv
 
-load_dotenv()
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
-class GoogleSheets:
-    def __init__(self):
-        self.sheet_id = os.getenv('GOOGLE_SHEET_ID')
-        self.service = None
+from config import Config
+from logger import logger
 
-    def setup(self):
-        """Load existing sheet credentials"""
-        if not self.sheet_id:
-            print("❌ GOOGLE_SHEET_ID not found in .env")
-            print("   Run: python setup_sheets.py")
-            return False
+SCOPES    = ["https://www.googleapis.com/auth/spreadsheets"]
+SHEET_TAB = "Deals"
+HEADERS   = ["Site", "URL", "Niche", "Score", "Price", "Was", "Est. ROI %", "Rationale", "Scanned At"]
 
+
+def _load_credentials():
+    """
+    Parse GOOGLE_SERVICE_ACCOUNT_JSON and return service_account.Credentials.
+    Returns None if the variable is missing or malformed.
+    """
+    raw = Config.GOOGLE_SERVICE_ACCOUNT_JSON.strip()
+    if not raw:
+        return None
+
+    # Try raw JSON first; fall back to base64-encoded JSON
+    info = None
+    try:
+        info = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
         try:
-            if os.path.exists('token.json'):
-                creds = Credentials.from_authorized_user_file('token.json')
-                self.service = build('sheets', 'v4', credentials=creds)
-                print(f"✅ Connected to sheet: {self.sheet_id}")
-                return True
-            else:
-                print("❌ token.json not found. Run: python setup_sheets.py")
-                return False
-        except Exception as e:
-            print(f"❌ Failed to setup Google Sheets: {str(e)}")
-            return False
+            info = json.loads(base64.b64decode(raw).decode("utf-8"))
+        except Exception as exc:
+            logger.error(
+                "sheets_creds_invalid",
+                f"GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON or base64: {exc}",
+                error=str(exc),
+            )
+            return None
 
-    def append_deals(self, deals):
-        """Append new deals to the sheet"""
-        if not self.sheet_id or not self.service:
-            print("❌ Google Sheets not set up properly")
-            return
+    try:
+        return service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+    except Exception as exc:
+        logger.error(
+            "sheets_creds_build_failed",
+            f"Failed to build service account credentials: {exc}",
+            error=str(exc),
+        )
+        return None
 
+
+def append_deals(deals: list[dict]) -> bool:
+    """
+    Append new deals to the Google Sheet.
+
+    - Skips duplicates by checking existing URLs in column B.
+    - Writes column headers automatically on first use (empty sheet).
+    - Returns True on success, False on any failure.
+    - Never raises — safe to call without a surrounding try/except.
+    """
+    if not Config.GOOGLE_SHEET_ID:
+        logger.warning("sheets_skip", "GOOGLE_SHEET_ID not set — skipping sheet write")
+        return False
+
+    creds = _load_credentials()
+    if creds is None:
+        logger.warning("sheets_skip", "GOOGLE_SERVICE_ACCOUNT_JSON not set or invalid — skipping sheet write")
+        return False
+
+    if not deals:
+        logger.info("sheets_empty", "No deals to write to Google Sheet")
+        return True
+
+    try:
+        svc   = build("sheets", "v4", credentials=creds, cache_discovery=False)
+        sheet = svc.spreadsheets().values()
+
+        # ── Fetch existing rows to detect duplicates ──────────────────────────
         try:
-            # Get existing data to avoid duplicates
-            result = self.service.spreadsheets().values().get(
-                spreadsheetId=self.sheet_id,
-                range='Deals!A:E'
+            existing = sheet.get(
+                spreadsheetId=Config.GOOGLE_SHEET_ID,
+                range=f"{SHEET_TAB}!A:B",
             ).execute()
-            existing_urls = set()
-            if 'values' in result:
-                for row in result['values'][1:]:  # Skip header
-                    if len(row) >= 2:
-                        existing_urls.add(row[1])  # URL column
+        except Exception as exc:
+            logger.warning(
+                "sheets_fetch_warn",
+                f"Could not read existing sheet rows (will append anyway): {exc}",
+                error=str(exc),
+            )
+            existing = {}
 
-            # Filter out duplicates
-            new_deals = []
-            for deal in deals:
-                if deal.get('url') not in existing_urls:
-                    new_deals.append(deal)
+        rows_so_far   = existing.get("values", [])
+        has_header    = bool(rows_so_far)
+        existing_urls = {r[1] for r in rows_so_far[1:] if len(r) > 1}  # skip header row
 
-            if not new_deals:
-                print("✅ No new deals to add")
-                return
+        # ── Deduplicate ───────────────────────────────────────────────────────
+        new_deals = [d for d in deals if d.get("url", "") not in existing_urls]
+        if not new_deals:
+            logger.info("sheets_no_new", "All deals already present in sheet — nothing written")
+            return True
 
-            # Prepare data for append
-            values = []
-            for deal in new_deals:
-                values.append([
-                    deal.get('site_name', ''),
-                    deal.get('url', ''),
-                    deal.get('rationale', ''),
-                    datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'New'
-                ])
+        # ── Build payload ─────────────────────────────────────────────────────
+        now     = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        payload: list[list] = []
 
-            # Append to sheet
-            self.service.spreadsheets().values().append(
-                spreadsheetId=self.sheet_id,
-                range='Deals!A:E',
-                valueInputOption='RAW',
-                insertDataOption='INSERT_ROWS',
-                body={'values': values}
-            ).execute()
+        if not has_header:
+            payload.append(HEADERS)
 
-            print(f"✅ Added {len(new_deals)} new deals to Google Sheet")
-            print(f"   View at: https://docs.google.com/spreadsheets/d/{self.sheet_id}")
+        for d in new_deals:
+            roi = f"{d['roi_pct']}%" if d.get("roi_pct") is not None else ""
+            payload.append([
+                d.get("site_name",      ""),
+                d.get("url",            ""),
+                d.get("niche",          ""),
+                d.get("quality_score",  ""),
+                d.get("deal_price",     ""),
+                d.get("original_price", ""),
+                roi,
+                d.get("rationale",      ""),
+                now,
+            ])
 
-        except Exception as e:
-            print(f"❌ Failed to append deals: {str(e)}")
+        # ── Append to sheet ───────────────────────────────────────────────────
+        sheet.append(
+            spreadsheetId=Config.GOOGLE_SHEET_ID,
+            range=f"{SHEET_TAB}!A:I",
+            valueInputOption="RAW",
+            insertDataOption="INSERT_ROWS",
+            body={"values": payload},
+        ).execute()
+
+        logger.info(
+            "sheets_write_ok",
+            f"Wrote {len(new_deals)} deal(s) to Google Sheet",
+            count=len(new_deals),
+            sheet_id=Config.GOOGLE_SHEET_ID,
+        )
+        return True
+
+    except Exception as exc:
+        logger.error(
+            "sheets_write_failed",
+            f"Google Sheet write failed: {exc}",
+            error=str(exc),
+        )
+        return False

@@ -12,8 +12,9 @@ class Config:
     SERPER_API_KEY = os.getenv("SERPER_API_KEY")
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
     GITHUB_API_KEY = os.getenv("GITHUB_API_KEY")
-    GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
-    GOOGLE_SERVICE_ACCOUNT_EMAIL = os.getenv("GOOGLE_SERVICE_ACCOUNT_EMAIL")
+    GOOGLE_SHEET_ID              = os.getenv("GOOGLE_SHEET_ID", "")
+    GOOGLE_SERVICE_ACCOUNT_EMAIL = os.getenv("GOOGLE_SERVICE_ACCOUNT_EMAIL", "")
+    GOOGLE_SERVICE_ACCOUNT_JSON  = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
 
     # Telegram alerts — set both to enable; leave blank to log only
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
