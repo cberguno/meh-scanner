@@ -512,7 +512,7 @@ async def candidates_html(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="candidates_table.html",
-        context={"candidates": candidates_sorted[:20]},
+        context={"candidates": candidates_sorted},
     )
 
 
@@ -625,10 +625,18 @@ async def debug_candidates():
             {
                 "site_name":        c.get("site_name", ""),
                 "url":              c.get("url", ""),
+                "snippet":          c.get("snippet", ""),
+                "discovery_source": c.get("discovery_source", ""),
+                "source_status":    c.get("source_status", ""),
+                "vibe_score":       c.get("vibe_score"),
                 "deal_title":       c.get("deal_title", ""),
                 "deal_price":       c.get("deal_price", ""),
                 "original_price":   c.get("original_price", ""),
+                "meh_signals":      c.get("meh_signals", ""),
+                "meh_signal_hits":  c.get("meh_signal_hits"),
+                "scrape_method":    c.get("scrape_method", ""),
                 "quality_score":    c.get("quality_score"),
+                "rationale":        c.get("rationale", ""),
                 "accepted":         c.get("accepted", False),
                 "rejection_reason": c.get("rejection_reason", ""),
                 "niche":            c.get("niche", ""),

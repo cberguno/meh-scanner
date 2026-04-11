@@ -12,10 +12,16 @@ from alerts import check_and_fire_alerts
 from analyzer import analyze_sites_batch
 from sheets import append_deals
 from config import Config
-from dashboard_export import export_daily_dashboard
+from dashboard_export import export_daily_dashboard, write_project_root_candidate_files
+from scoring import build_candidate_records
 from db import record_source_visit
 from logger import logger
-from scraper import search_for_deal_sites, enrich_candidates
+from scraper import (
+    enrich_candidates,
+    get_last_search_diagnostics,
+    mark_candidates_seen,
+    search_for_deal_sites,
+)
 
 
 def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
@@ -50,14 +56,17 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
     _scored     = 0
     _filtered   = 0
     _sheets_status = "skip"
+    _marked_seen = 0
+    search_diag: dict = {}
 
     # ── Phase 1: search & enrich ────────────────────────────────────────────
     try:
         logger.info("search_phase", "Searching for deal sites…")
         sites = search_for_deal_sites(force_domains=force_domains)
+        search_diag = get_last_search_diagnostics()
         if not sites:
             logger.warning("no_sites_found", "No sites returned by search")
-            return _ok([], 0, start)
+            return _ok([], 0, start, search_diag=search_diag)
 
         _discovered = len(sites)
         logger.info("sites_found", f"Found {len(sites)} candidates", count=len(sites))
@@ -72,6 +81,7 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
         logger.info("analysis_phase", f"Analyzing {len(sites)} sites…")
         analyses = analyze_sites_batch(sites)
         _analyzed = len(analyses)
+        _marked_seen = mark_candidates_seen([item["site"] for item in analyses])
         logger.info("debug_analyses", f"DEBUG analysis done: {len(analyses)} results", count=len(analyses))
         for i, _item in enumerate(analyses[:3]):
             logger.info("debug_sample", f"DEBUG sample {i+1}: site={_item['site'].get('title','?')!r} raw={_item['analysis'][:300]!r}", index=i+1, site=_item['site'].get('title',''), raw=_item['analysis'][:300])
@@ -79,110 +89,74 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
         return _fail(f"Analysis failed: {exc}", start)
 
     # ── Phase 3: filter & build deal list ───────────────────────────────────
+    all_candidates = build_candidate_records(analyses)
+    _parse_fail = sum(
+        1 for c in all_candidates if c.get("rejection_reason") == "analysis parse error"
+    )
+    _scored = sum(1 for c in all_candidates if c.get("quality_score") is not None)
     deals: list[dict] = []
-    all_candidates: list[dict] = []
-    for item in analyses:
-        site = item["site"]
-        raw = item["analysis"]
-        try:
-            parsed = json.loads(raw)
-            score = parsed.get("quality_score", 0)
-            _scored += 1
-            accepted = score >= 6
-            logger.info("debug_score", f"DEBUG score: {site.get('title','?')!r} → {score}", title=site.get('title',''), score=score)
-            all_candidates.append({
-                "site_name":        site.get("title", ""),
-                "url":              site.get("link", ""),
-                "deal_title":       site.get("deal_title", ""),
-                "deal_price":       site.get("deal_price", ""),
-                "original_price":   site.get("original_price", ""),
-                "quality_score":    score,
-                "niche":            parsed.get("niche", ""),
-                "accepted":         accepted,
-                "rejection_reason": "" if accepted else f"score {score} < 6",
-            })
-            if accepted:
-                _filtered += 1
-                deals.append(apply_affiliate_url(_compute_roi({
-                    "site_name":      site.get("title", ""),
-                    "url":            site.get("link", ""),
-                    "rationale":      parsed.get("rationale", raw),
-                    "niche":          parsed.get("niche", ""),
-                    "quality_score":  score,
-                    "deal_price":     site.get("deal_price", ""),
-                    "original_price": site.get("original_price", ""),
-                })))
-        except Exception as exc:
-            _parse_fail += 1
-            all_candidates.append({
-                "site_name":        site.get("title", ""),
-                "url":              site.get("link", ""),
-                "deal_title":       "",
-                "deal_price":       "",
-                "original_price":   "",
-                "quality_score":    None,
-                "niche":            "",
-                "accepted":         False,
-                "rejection_reason": "analysis parse error",
-            })
+    for c in all_candidates:
+        if not c.get("accepted"):
+            continue
+        _filtered += 1
+        deals.append(
+            apply_affiliate_url(
+                _compute_roi(
+                    {
+                        "site_name": c["site_name"],
+                        "url": c["url"],
+                        "rationale": c.get("rationale") or "",
+                        "niche": c.get("niche", ""),
+                        "quality_score": c["quality_score"],
+                        "deal_price": c.get("deal_price", ""),
+                        "original_price": c.get("original_price", ""),
+                    }
+                )
+            )
+        )
+
+    for item, c in zip(analyses, all_candidates):
+        logger.info(
+            "debug_score",
+            f"DEBUG score: {c.get('site_name', '?')!r} vibe={c.get('vibe_score')} → q={c.get('quality_score')}",
+            title=c.get("site_name", ""),
+            vibe_score=c.get("vibe_score"),
+            quality_score=c.get("quality_score"),
+        )
+        if c.get("rejection_reason") == "analysis parse error":
             logger.warning(
                 "analysis_parse_failed",
-                f"Could not parse analysis for {site.get('title')}: {exc}",
-                site=site.get("title"),
-                error=str(exc),
+                f"Could not parse analysis for {item['site'].get('title')}",
+                site=item["site"].get("title"),
+                error=item["analysis"][:500],
             )
 
     logger.info("debug_filtered", f"DEBUG filter result: {len(deals)} deals passed score >= 6", count=len(deals))
 
-    # ── Phase 3e: write candidates.csv and print to console ──────────────────
-    import csv as _csv
-    _csv_cols = ["site_name","url","deal_title","deal_price","original_price",
-                 "quality_score","accepted","rejection_reason","niche"]
+    # ── Phase 3e: write candidates.csv / candidates.txt and print to console ─
     try:
-        # ── CSV ───────────────────────────────────────────────────────────────
-        with open("candidates.csv", "w", newline="", encoding="utf-8") as _f:
-            _w = _csv.DictWriter(_f, fieldnames=_csv_cols, extrasaction="ignore")
-            _w.writeheader()
-            for _c in all_candidates:
-                _w.writerow({**_c, "accepted": "yes" if _c.get("accepted") else "no"})
+        write_project_root_candidate_files(all_candidates)
 
-        # ── Plain text ────────────────────────────────────────────────────────
-        _txt_lines = []
-        if not all_candidates:
-            _txt_lines.append("NO CANDIDATES FOUND")
-        else:
-            _txt_lines.append("\t".join(_csv_cols))
-            for _c in all_candidates:
-                _txt_lines.append("\t".join([
-                    str(_c.get("site_name")        or ""),
-                    str(_c.get("url")              or ""),
-                    str(_c.get("deal_title")       or ""),
-                    str(_c.get("deal_price")       or ""),
-                    str(_c.get("original_price")   or ""),
-                    str(_c.get("quality_score")    if _c.get("quality_score") is not None else ""),
-                    "yes" if _c.get("accepted") else "no",
-                    str(_c.get("rejection_reason") or ""),
-                    str(_c.get("niche")            or ""),
-                ]))
-        with open("candidates.txt", "w", encoding="utf-8") as _f:
-            _f.write("\n".join(_txt_lines) + "\n")
-
-        # ── Console ───────────────────────────────────────────────────────────
         print(f"\n=== SCAN CANDIDATES ({len(all_candidates)} total) ===")
         if not all_candidates:
             print("NO CANDIDATES FOUND")
         else:
-            print("site_name | deal_title | deal_price | original_price | quality_score | accepted | reason")
+            print(
+                "site_name | vibe_score | deal_title | quality_score | accepted | reason"
+            )
             for _c in all_candidates:
-                print(" | ".join([
-                    str(_c.get("site_name")        or ""),
-                    str(_c.get("deal_title")       or ""),
-                    str(_c.get("deal_price")       or ""),
-                    str(_c.get("original_price")   or ""),
-                    str(_c.get("quality_score")    if _c.get("quality_score") is not None else ""),
-                    "yes" if _c.get("accepted") else "no",
-                    str(_c.get("rejection_reason") or ""),
-                ]))
+                print(
+                    " | ".join(
+                        [
+                            str(_c.get("site_name") or ""),
+                            str(_c.get("vibe_score") if _c.get("vibe_score") is not None else ""),
+                            str(_c.get("deal_title") or "")[:40],
+                            str(_c.get("quality_score") if _c.get("quality_score") is not None else ""),
+                            "yes" if _c.get("accepted") else "no",
+                            str(_c.get("rejection_reason") or ""),
+                        ]
+                    )
+                )
         print("=" * 60)
     except Exception as _exc:
         print(f"[candidates dump failed: {_exc}]")
@@ -227,10 +201,22 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
         "scan_summary",
         f"scan_summary discovered={_discovered} enriched={_enriched} analysis={_analyzed} "
         f"parse_fail={_parse_fail} scored={_scored} filtered={_filtered} deals={len(deals)} "
-        f"sheets={_sheets_status} missing_keys={_missing}",
+        f"sheets={_sheets_status} search_ok={search_diag.get('queries_succeeded', 0)}/{search_diag.get('queries_total', 0)} "
+        f"live={search_diag.get('selected_search_candidates', 0)} seed={search_diag.get('selected_seed_candidates', 0)} "
+        f"seen_marked={_marked_seen} missing_keys={_missing}",
         discovered=_discovered, enriched=_enriched, analysis=_analyzed,
         parse_fail=_parse_fail, scored=_scored, filtered=_filtered,
         deals=len(deals), sheets=_sheets_status, missing_keys=_missing,
+        search_queries_total=search_diag.get("queries_total", 0),
+        search_queries_succeeded=search_diag.get("queries_succeeded", 0),
+        search_queries_failed=search_diag.get("queries_failed", 0),
+        selected_search_candidates=search_diag.get("selected_search_candidates", 0),
+        selected_seed_candidates=search_diag.get("selected_seed_candidates", 0),
+        degraded_search=search_diag.get("degraded_search", False),
+        low_yield_search=search_diag.get("low_yield_search", False),
+        relaxed_vibe_threshold_used=search_diag.get("relaxed_vibe_threshold_used", False),
+        search_drop_reasons=search_diag.get("drop_reasons", {}),
+        seen_marked=_marked_seen,
     )
 
     logger.info(
@@ -259,6 +245,16 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
             "deals":       len(deals),
             "sheets":      _sheets_status,
             "missing_keys": _missing,
+            "search_queries_total": search_diag.get("queries_total", 0),
+            "search_queries_succeeded": search_diag.get("queries_succeeded", 0),
+            "search_queries_failed": search_diag.get("queries_failed", 0),
+            "search_live": search_diag.get("selected_search_candidates", 0),
+            "search_seed": search_diag.get("selected_seed_candidates", 0),
+            "search_degraded": search_diag.get("degraded_search", False),
+            "search_low_yield": search_diag.get("low_yield_search", False),
+            "search_relaxed_threshold": search_diag.get("relaxed_vibe_threshold_used", False),
+            "search_drop_summary": _format_drop_summary(search_diag.get("drop_reasons", {})),
+            "seen_marked": _marked_seen,
         },
     }
 
@@ -323,7 +319,8 @@ def _compute_roi(deal: dict) -> dict:
     return {**deal, "estimated_value": est, "profit": profit, "roi_pct": roi_pct}
 
 
-def _ok(deals: list, candidates: int, start: float) -> dict:
+def _ok(deals: list, candidates: int, start: float, *, search_diag: dict | None = None) -> dict:
+    search_diag = search_diag or {}
     return {
         "success":     True,
         "deals":       deals,
@@ -331,4 +328,35 @@ def _ok(deals: list, candidates: int, start: float) -> dict:
         "candidates":  candidates,
         "runtime":     round(time.time() - start, 1),
         "error":       None,
+        "summary": {
+            "discovered": candidates,
+            "enriched": 0,
+            "analyzed": 0,
+            "parse_fail": 0,
+            "scored": 0,
+            "filtered": 0,
+            "deals": len(deals),
+            "sheets": "skip",
+            "missing_keys": [],
+            "search_queries_total": search_diag.get("queries_total", 0),
+            "search_queries_succeeded": search_diag.get("queries_succeeded", 0),
+            "search_queries_failed": search_diag.get("queries_failed", 0),
+            "search_live": search_diag.get("selected_search_candidates", 0),
+            "search_seed": search_diag.get("selected_seed_candidates", 0),
+            "search_degraded": search_diag.get("degraded_search", False),
+            "search_low_yield": search_diag.get("low_yield_search", False),
+            "search_relaxed_threshold": search_diag.get("relaxed_vibe_threshold_used", False),
+            "search_drop_summary": _format_drop_summary(search_diag.get("drop_reasons", {})),
+            "seen_marked": 0,
+        },
     }
+
+
+def _format_drop_summary(drop_reasons: dict) -> str:
+    if not drop_reasons:
+        return ""
+    parts = []
+    for reason, count in sorted(drop_reasons.items(), key=lambda item: (-item[1], item[0]))[:4]:
+        if count:
+            parts.append(f"{reason}={count}")
+    return ", ".join(parts)

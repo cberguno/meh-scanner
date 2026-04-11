@@ -1,0 +1,89 @@
+{% extends 'base.html' %}
+
+{% block content %}
+  <div class="card">
+    <h2>Flight Search</h2>
+    {% if error %}
+      <p class="error">{{ error }}</p>
+    {% endif %}
+    <form action="/flights" method="get">
+      <div class="field">
+        <label>Origin</label>
+        <input name="origin" value="{{ query.origin }}" placeholder="SFO" required />
+      </div>
+      <div class="field">
+        <label>Destination</label>
+        <input name="destination" value="{{ query.destination }}" placeholder="LAX" required />
+      </div>
+      <div class="field">
+        <label>Departure date</label>
+        <input name="departure_date" type="date" value="{{ query.departure_date }}" required />
+      </div>
+      <div class="field">
+        <label>Departure time</label>
+        <input name="departure_time" type="time" value="{{ query.departure_time }}" />
+      </div>
+      <div class="field">
+        <label>Return date</label>
+        <input name="return_date" type="date" value="{{ query.return_date }}" />
+      </div>
+      <div class="field">
+        <label>Preferred airline</label>
+        <input name="preferred_airline" value="{{ query.preferred_airline }}" placeholder="MockAir" />
+      </div>
+      <div class="field">
+        <label>Connection preference</label>
+        <select name="connection_preference">
+          <option value="any"{% if query.connection_preference == 'any' %} selected{% endif %}>Any</option>
+          <option value="nonstop"{% if query.connection_preference == 'nonstop' %} selected{% endif %}>Nonstop</option>
+          <option value="1 stop"{% if query.connection_preference == '1 stop' %} selected{% endif %}>1 stop</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Passengers</label>
+        <input name="passengers" type="number" min="1" max="9" value="{{ query.passengers }}" />
+      </div>
+      <div class="field">
+        <label>Cabin class</label>
+        <select name="cabin_class">
+          <option{% if query.cabin_class == 'Economy' %} selected{% endif %}>Economy</option>
+          <option{% if query.cabin_class == 'Premium Economy' %} selected{% endif %}>Premium Economy</option>
+          <option{% if query.cabin_class == 'Business' %} selected{% endif %}>Business</option>
+        </select>
+      </div>
+      <button class="button" type="submit">Search flights</button>
+    </form>
+  </div>
+
+  {% if results %}
+    <div class="card">
+      <h3>Results</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Airline</th>
+            <th>Departure</th>
+            <th>Connection</th>
+            <th>Itinerary</th>
+            <th>Class</th>
+            <th>Price</th>
+            <th>Booking</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in results %}
+            <tr>
+              <td>{{ item.airline }}</td>
+              <td>{{ item.departure_time or 'any' }}</td>
+              <td>{{ item.connection_type }}</td>
+              <td>{{ item.itinerary }}</td>
+              <td>{{ item.cabin_class }}</td>
+              <td>{{ item.price }} {{ item.currency }}</td>
+              <td><a href="{{ item.booking_url }}" target="_blank">Book</a></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+{% endblock %}

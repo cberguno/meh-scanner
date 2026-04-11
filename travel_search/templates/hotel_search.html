@@ -1,0 +1,63 @@
+{% extends 'base.html' %}
+
+{% block content %}
+  <div class="card">
+    <h2>Hotel Search</h2>
+    {% if error %}
+      <p class="error">{{ error }}</p>
+    {% endif %}
+    <form action="/hotels" method="get">
+      <div class="field">
+        <label>Destination</label>
+        <input name="destination" value="{{ query.destination }}" placeholder="Paris" required />
+      </div>
+      <div class="field">
+        <label>Check-in date</label>
+        <input name="checkin_date" type="date" value="{{ query.checkin_date }}" required />
+      </div>
+      <div class="field">
+        <label>Checkout date</label>
+        <input name="checkout_date" type="date" value="{{ query.checkout_date }}" required />
+      </div>
+      <div class="field">
+        <label>Guests</label>
+        <input name="guests" type="number" min="1" max="10" value="{{ query.guests }}" />
+      </div>
+      <div class="field">
+        <label>Rooms</label>
+        <input name="rooms" type="number" min="1" max="5" value="{{ query.rooms }}" />
+      </div>
+      <button class="button" type="submit">Search hotels</button>
+    </form>
+  </div>
+
+  {% if results %}
+    <div class="card">
+      <h3>Results</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Rating</th>
+            <th>Room</th>
+            <th>Price/night</th>
+            <th>Total</th>
+            <th>Booking</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in results %}
+            <tr>
+              <td>{{ item.name }}</td>
+              <td>{{ item.rating }}★</td>
+              <td>{{ item.room_type }}</td>
+              <td>{{ item.price_per_night }} {{ item.currency }}</td>
+              <td>{{ item.total_price }} {{ item.currency }}</td>
+              <td><a href="{{ item.booking_url }}" target="_blank">Book</a></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+{% endblock %}

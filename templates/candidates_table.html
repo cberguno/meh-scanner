@@ -1,9 +1,9 @@
-<!-- Last scan candidates partial — rendered by /api/candidates_html -->
+<!-- Last scan candidates partial - rendered by /api/candidates_html -->
 {% if not candidates %}
-  <p class="text-xs text-base-content/50 py-2">No scan data yet — run a scan to see candidates.</p>
+  <p class="text-xs text-base-content/50 py-2">No scan data yet - run a scan to see candidates.</p>
 {% else %}
   <p class="text-xs text-base-content/50 mb-2">
-    {{ candidates | length }} candidate{% if candidates | length != 1 %}s{% endif %} —
+    Showing all <strong>{{ candidates | length }}</strong> candidate{% if candidates | length != 1 %}s{% endif %} from the last scan (max 25 per run) -
     <span class="text-success">{{ candidates | selectattr('accepted') | list | length }} accepted</span>,
     <span class="text-base-content/50">{{ candidates | rejectattr('accepted') | list | length }} rejected</span>
   </p>
@@ -11,8 +11,11 @@
     <table class="table table-sm table-zebra w-full text-xs">
       <thead>
         <tr>
-          <th class="w-16 text-center">Score</th>
+          <th class="w-16 text-center">Src</th>
+          <th class="w-12 text-center" title="Discovery vibe (pre-visit)">Vibe</th>
+          <th class="w-16 text-center">Q</th>
           <th>Site</th>
+          <th class="hidden lg:table-cell w-12 text-center" title="Meh keyword hits on page">Hits</th>
           <th class="hidden md:table-cell">Niche</th>
           <th class="hidden sm:table-cell w-24">Price</th>
           <th class="hidden sm:table-cell w-24">Was</th>
@@ -23,6 +26,16 @@
       <tbody>
         {% for c in candidates %}
         <tr class="hover {{ '' if c.accepted else 'opacity-50' }}">
+          <td class="text-center">
+            {% if c.get("discovery_source") == "seed" %}
+              <span class="badge badge-ghost badge-sm" title="Curated seed site">seed</span>
+            {% else %}
+              <span class="badge badge-info badge-sm" title="Live search discovery">search</span>
+            {% endif %}
+          </td>
+          <td class="text-center text-base-content/70 font-mono text-xs" title="Discovery vibe (pre-visit)">
+            {% if c.get("vibe_score") is none %}-{% else %}{{ c.get("vibe_score") }}{% endif %}
+          </td>
           <td class="text-center">
             {% if c.quality_score is none %}
               <span class="badge badge-ghost badge-sm">err</span>
@@ -37,16 +50,19 @@
           <td class="max-w-[12rem]">
             <a href="{{ c.url }}" target="_blank" rel="noopener noreferrer"
                class="link link-hover font-semibold truncate block" title="{{ c.site_name }}">
-              {{ c.site_name or c.url or "—" }}
+              {{ c.site_name or c.url or "-" }}
             </a>
             {% if c.deal_title %}
             <span class="text-base-content/50 truncate block" title="{{ c.deal_title }}">{{ c.deal_title[:60] }}</span>
             {% endif %}
           </td>
-          <td class="hidden md:table-cell text-base-content/60">{{ c.niche or "—" }}</td>
-          <td class="hidden sm:table-cell font-mono text-success">{{ c.deal_price or "—" }}</td>
+          <td class="hidden lg:table-cell text-center font-mono text-xs text-base-content/50">
+            {% if c.get("meh_signal_hits") is none %}-{% else %}{{ c.get("meh_signal_hits") }}{% endif %}
+          </td>
+          <td class="hidden md:table-cell text-base-content/60">{{ c.niche or "-" }}</td>
+          <td class="hidden sm:table-cell font-mono text-success">{{ c.deal_price or "-" }}</td>
           <td class="hidden sm:table-cell font-mono text-base-content/50">
-            {% if c.original_price %}<span class="line-through">{{ c.original_price }}</span>{% else %}—{% endif %}
+            {% if c.original_price %}<span class="line-through">{{ c.original_price }}</span>{% else %}-{% endif %}
           </td>
           <td class="text-center">
             {% if c.accepted %}

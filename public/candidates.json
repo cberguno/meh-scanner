@@ -1,0 +1,52 @@
+{
+  "generated_at": "2026-04-11 19:59 UTC",
+  "scoring": {
+    "vibe_score": {
+      "range": "0–10 (integer)",
+      "where": "scraper.score_meh_vibe(search_result_title, search_result_snippet)",
+      "meaning": "Cheap pre-visit heuristic: +1 per positive token (deal, daily, one, flash, …), -2 per negative token (amazon, marketplace, coupon codes, …), +2 if the title matches deal|sale|meh|daily|steal|score, −1 for generic Shopify/Etsy hosts, then clamped to 0–10.",
+      "discovery_gate": "Serper results are kept only when vibe_score >= 4. Curated seed URLs from config get vibe_score 7 by default."
+    },
+    "meh_signals": {
+      "where": "scraper._collect_meh_signals on page title, promo/body text, price line, and optional accessibility hints",
+      "meaning": "Comma-separated hits from MEH_SIGNAL_KEYWORDS (e.g. one deal, daily deal, today only, flash sale). Describes on-page copy, not a second numeric grade."
+    },
+    "meh_signal_hits": {
+      "meaning": "Count of distinct keyword phrases listed in meh_signals (0 if none)."
+    },
+    "quality_score": {
+      "range": "0–10 (integer from model JSON)",
+      "where": "analyzer.analyze_site — Anthropic Claude (model in analyzer.py)",
+      "meaning": "Whether the URL is a US-facing indie “one discounted item per day” merchant (vs blog, marketplace, news, local restaurant deal, etc.). See analyzer prompt for disqualifiers and rubric.",
+      "acceptance_gate": "A candidate is “accepted” for the sheet/dashboard when quality_score >= 6 (same threshold as main.py deal filter)."
+    },
+    "rationale": {
+      "meaning": "One-sentence model explanation for the quality_score (supplier judgment)."
+    },
+    "product_fields": {
+      "deal_title": "On-page title (Playwright h1 / og:title / soup) — display only, not a separate numeric score.",
+      "deal_price": "First price-like string found on page (semantic tags + regex).",
+      "original_price": "Strikethrough / compare-at / class patterns when present.",
+      "note": "These support the LLM and your review; they are not additional graded scores."
+    }
+  },
+  "candidates": [
+    {
+      "site_name": "T",
+      "url": "https://example.com",
+      "snippet": "",
+      "vibe_score": 5,
+      "deal_title": "",
+      "deal_price": "",
+      "original_price": "",
+      "meh_signals": "",
+      "meh_signal_hits": 0,
+      "scrape_method": "playwright",
+      "quality_score": 5,
+      "niche": "",
+      "rationale": "test",
+      "accepted": false,
+      "rejection_reason": "score 5 < 6"
+    }
+  ]
+}

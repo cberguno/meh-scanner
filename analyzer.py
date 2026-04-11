@@ -26,21 +26,35 @@ From live page scrape:
 - Screenshot (local path for your context only): {site.get('screenshot_path', '') or '(none)'}
 - Scrape method: {site.get('scrape_method', '')}"""
 
-    prompt = f"""You are writing for someone hunting indie "one deal a day" / Meh-style sites.
+    prompt = f"""You are vetting candidates for someone hunting indie "one deal a day" / Meh-style sites.
 
 {ctx}
 
-Is this a strong Meh-like daily deal experience (single focused item, personality, not a big marketplace)?
-Be witty and buyer-focused in one or two sentences, then score.
+CRITICAL DISQUALIFIERS — score 0 immediately if ANY apply:
+- Article, blog post, or listicle ABOUT deal sites — not itself a deal site
+- News outlet, tech blog, or review site (any major media domain)
+- Restaurant, food delivery, bar, or café running a daily food special
+- Florist, gift shop, or local service business with a "deal of the day"
+- Cannabis dispensary or local retail store
+- Affiliate blog promoting another store's deals (e.g. "Today only at Sephora…")
+- Single product page on a general e-commerce or seafood/food delivery site
+- Community forum, social media post, or user discussion thread
+- Real estate, financial services, or B2B company
+- Non-US site (South Africa, Portugal, Indonesia, Australia, UK, India, etc.)
+- Large marketplace (Amazon, eBay, Walmart, etc.)
+- Coupon or promo-code aggregator
 
-Score rubric (use the full range):
-  0-2  Not a deal site at all (blog, review, social, aggregator)
-  3-4  Deal-adjacent but wrong format (multi-item, big marketplace, coupon list)
+ONLY score ≥6 if: a US-based, independently operated website whose PRIMARY business model is selling ONE discounted product per day directly to consumers.
+
+Score rubric:
+  0-2  Not a deal site at all (articles about deals, blogs, news, local shops, B2B)
+  3-4  Deal-adjacent but wrong format (multi-item, big marketplace, coupon aggregator)
   5-6  Has deals but lacks focus, personality, or clear single-item format
   7-8  Solid single-item daily deal site with some personality
   9-10 Textbook Meh clone — one item, witty copy, strong deal, clear pricing
 
-Return JSON only: {{"rationale": "...", "quality_score": <int 0-10>, "niche": "..."}}"""
+Be concise in rationale (one sentence max). Return JSON only:
+{{"rationale": "...", "quality_score": <int 0-10>, "niche": "..."}}"""
 
     try:
         response = client.messages.create(

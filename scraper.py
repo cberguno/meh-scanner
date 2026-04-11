@@ -1,8 +1,8 @@
 import hashlib
 import random
 import re
-import sqlite3
 import time
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from config import Config
-from db import get_source_status, _extract_domain as _db_extract_domain
+from db import init_db, is_site_seen, mark_site_seen, get_source_status, _extract_domain as _db_extract_domain, _normalize_url_for_seen as normalize_url
 from logger import logger, log_search_start, log_search_complete, log_site_scraped
 
 SCREENSHOTS_DIR = Path("logs") / "screenshots"
@@ -51,60 +51,8 @@ MEH_SIGNAL_KEYWORDS = (
     "single item",
 )
 
-# SQLite setup for deduplication
-DB_PATH = Path("seen_sites.db")
-
-def normalize_url(url):
-    """Normalize URL for deduplication: lowercase, strip trailing slash, remove query params"""
-    url = url.lower().strip()
-    url = re.sub(r'/+$', '', url)  # Remove trailing slashes
-    url = re.sub(r'\?.*$', '', url)  # Remove query parameters
-    return url
-
-def init_db():
-    """Initialize SQLite database for tracking seen sites"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS seen_sites (
-            url TEXT PRIMARY KEY,
-            first_seen TIMESTAMP,
-            last_seen TIMESTAMP
-        )
-    ''')
-    
-    # Clean up entries older than 120 days
-    cutoff_date = (datetime.now() - timedelta(days=1)).isoformat()
-    cursor.execute('DELETE FROM seen_sites WHERE last_seen < ?', (cutoff_date,))
-    deleted = cursor.rowcount
-    if deleted > 0:
-        logger.info("db_cleanup", deleted=deleted, message=f"Cleaned up {deleted} old entries from seen_sites.db")
-    
-    conn.commit()
-    conn.close()
-
-def is_site_seen(url):
-    """Check if site has been seen before"""
-    normalized_url = normalize_url(url)
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('SELECT 1 FROM seen_sites WHERE url = ?', (normalized_url,))
-    seen = cursor.fetchone() is not None
-    conn.close()
-    return seen
-
-def mark_site_seen(url):
-    """Mark site as seen"""
-    normalized_url = normalize_url(url)
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    now = datetime.now().isoformat()
-    cursor.execute('''
-        INSERT OR REPLACE INTO seen_sites (url, first_seen, last_seen)
-        VALUES (?, COALESCE((SELECT first_seen FROM seen_sites WHERE url = ?), ?), ?)
-    ''', (normalized_url, normalized_url, now, now))
-    conn.commit()
-    conn.close()
+SERPER_RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+_LAST_SEARCH_DIAGNOSTICS: dict = {}
 
 def score_meh_vibe(title, snippet):
     """Cheap heuristic scoring for 'Meh vibe' before Playwright visit"""
@@ -127,6 +75,16 @@ def score_meh_vibe(title, snippet):
         'million', 'marketplace', 'storefront', 'shopify', 'etsy',
         # Coupon/promo-code aggregators (e.g. 1sale.com) use these exact phrases
         'coupon codes', 'promo codes',
+        # Geographic / catalog false positives
+        'india', 'flipkart', 'myntra', 'snapdeal',
+        # Multi-product catalog indicators (not one-item-per-day)
+        'all deals', 'hundreds of deals', 'thousands of deals',
+        'retailer of', 'supplier of', 'manufacturer of', 'wholesaler',
+        'get upto', 'get up to',
+        # Article/listicle indicators — sites writing ABOUT deal sites, not being one
+        'best deal sites', 'top deal sites', 'sites that', 'these sites',
+        'best websites', 'top websites', 'list of sites', 'deal sites that',
+        'daily deal sites', 'one deal a day sites',
     ]
     
     for keyword in positive_keywords:
@@ -168,6 +126,38 @@ _BLOCKED_DOMAINS = frozenset({
     "netcorecloud.com",              # email-marketing SaaS — surfaces via "One Deal A Day" case study title
     "ecommercetrainingacademy.com",  # e-commerce blog, not a deal site
     "play.google.com",               # app store listings, not deal sites
+    # Confirmed garbage from live scans
+    "indiadesire.com",               # Indian affiliate blog, not a deal site
+    "exportersindia.com",            # Indian B2B marketplace, completely irrelevant
+    "dealsmagnet.com",               # generic Indian deal aggregator
+    "couponorg.com",                 # coupon/promo code aggregator
+    "myntra.com",                    # large Indian fashion marketplace
+    "flipkart.com",                  # large Indian e-commerce marketplace
+    "amazon.in",                     # Indian Amazon
+    "snapdeal.com",                  # Indian e-commerce marketplace
+    # Tech/news article sites — write about deal sites but are not deal sites
+    "makeuseof.com",
+    "askbobrankin.com",
+    "nytimes.com",
+    "pcmag.com",
+    "cnet.com",
+    "techradar.com",
+    "tomsguide.com",
+    "theverge.com",
+    "lifehacker.com",
+    "buzzfeed.com",
+    "businessinsider.com",
+    "huffpost.com",
+    "forbes.com",
+    "wsj.com",
+    "techcrunch.com",
+    "wired.com",
+    "pcworld.com",
+    "digitaltrends.com",
+    "slashgear.com",
+    "9to5mac.com",
+    "9to5google.com",
+    "androidpolice.com",
 })
 
 
@@ -189,10 +179,110 @@ def _is_blocked_domain(url: str) -> bool:
         return False
 
 
+def _normalize_force_domains(force_domains) -> frozenset[str]:
+    """Normalize manual overrides so callers can pass bare domains or full URLs."""
+    normalized = set()
+    for value in force_domains or ():
+        raw = str(value).strip().lower()
+        if not raw:
+            continue
+        normalized.add(_db_extract_domain(raw))
+    return frozenset(normalized)
+
+
+def get_last_search_diagnostics() -> dict:
+    """Return the most recent search diagnostics snapshot."""
+    diagnostics = dict(_LAST_SEARCH_DIAGNOSTICS)
+    diagnostics["drop_reasons"] = dict(diagnostics.get("drop_reasons") or {})
+    diagnostics["query_candidates"] = dict(diagnostics.get("query_candidates") or {})
+    diagnostics["query_borderline_candidates"] = dict(diagnostics.get("query_borderline_candidates") or {})
+    diagnostics["rejection_samples"] = list(diagnostics.get("rejection_samples") or [])
+    return diagnostics
+
+
+def mark_candidates_seen(sites: list[dict]) -> int:
+    """Mark successfully processed candidate URLs as seen after downstream work completes."""
+    marked = 0
+    seen = set()
+    for site in sites:
+        url = site.get("link") or site.get("url") or ""
+        if not url:
+            continue
+        normalized = normalize_url(url)
+        if normalized in seen:
+            continue
+        mark_site_seen(url)
+        seen.add(normalized)
+        marked += 1
+
+    logger.info(
+        "seen_candidates_marked",
+        f"Marked {marked} processed candidates as seen",
+        marked=marked,
+    )
+    return marked
+
+
+def _append_rejection_sample(
+    samples: list[dict],
+    sample_keys: set[tuple[str, str]],
+    *,
+    reason: str,
+    query: str,
+    result: dict,
+    limit: int,
+    vibe_score: int | None = None,
+) -> None:
+    """Keep a small sample of filtered search results for debugging and tuning."""
+    if limit <= 0 or len(samples) >= limit:
+        return
+
+    title = str(result.get("title") or "").strip()
+    url = str(result.get("link") or "").strip()
+    key = (reason, normalize_url(url) or title[:120])
+    if key in sample_keys:
+        return
+
+    sample = {
+        "reason": reason,
+        "query": query,
+        "title": title[:140],
+        "url": url,
+    }
+    if vibe_score is not None:
+        sample["vibe_score"] = vibe_score
+
+    samples.append(sample)
+    sample_keys.add(key)
+
+
 def search_for_deal_sites(force_domains: frozenset = frozenset()):
-    """Search for potential one-sale-a-day sites using Serper (parallelized)"""
-    init_db()  # Initialize SQLite DB
+    """Search for potential one-sale-a-day sites using Serper + curated seed list."""
+    global _LAST_SEARCH_DIAGNOSTICS
+    force_domains = _normalize_force_domains(force_domains)
+    init_db()
     log_search_start(len(Config.SEARCH_QUERIES))
+
+    strict_vibe_threshold = max(0, Config.SEARCH_VIBE_THRESHOLD)
+    fallback_vibe_threshold = min(strict_vibe_threshold, max(0, Config.SEARCH_FALLBACK_VIBE_THRESHOLD))
+    min_live_candidates = max(0, Config.SEARCH_MIN_LIVE_CANDIDATES)
+    sample_limit = max(0, Config.SEARCH_REJECTION_SAMPLE_LIMIT)
+
+    drop_reasons: Counter[str] = Counter()
+    query_candidates: dict[str, int] = {}
+    query_borderline_candidates: dict[str, int] = {}
+    rejection_samples: list[dict] = []
+    rejection_sample_keys: set[tuple[str, str]] = set()
+    diagnostics = {
+        "queries_total": len(Config.SEARCH_QUERIES),
+        "queries_succeeded": 0,
+        "queries_failed": 0,
+        "raw_search_results": 0,
+        "forced_domains": sorted(force_domains),
+        "strict_vibe_threshold": strict_vibe_threshold,
+        "fallback_vibe_threshold": fallback_vibe_threshold,
+        "search_results_per_query": Config.SEARCH_RESULTS_PER_QUERY,
+    }
     
     headers = {
         'X-API-KEY': Config.SERPER_API_KEY,
@@ -206,57 +296,215 @@ def search_for_deal_sites(force_domains: frozenset = frozenset()):
         reraise=True
     )
     def search_query(query):
-        payload = {"q": query, "num": 10}
+        query_drop_reasons: Counter[str] = Counter()
+        query_borderline_results = []
+        query_samples: list[dict] = []
+        query_sample_keys: set[tuple[str, str]] = set()
+        payload = {"q": query, "num": Config.SEARCH_RESULTS_PER_QUERY, "gl": "us", "hl": "en"}
         try:
             response = requests.post("https://google.serper.dev/search", headers=headers, json=payload, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                results = []
-                if 'organic' in data:
-                    for result in data['organic']:
-                        url = result.get('link', '')
-                        # Skip blocked domains before any scoring or DB lookup
-                        if _is_blocked_domain(url):
-                            continue
-                        # Skip if seen before
-                        if is_site_seen(url):
-                            continue
-                        
-                        # Score Meh vibe
-                        title = result.get('title', '')
-                        snippet = result.get('snippet', '')
-                        vibe_score = score_meh_vibe(title, snippet)
-                        
-                        # Only include if score >= 3
-                        if vibe_score >= 3:
-                            results.append({
-                                'title': title,
-                                'link': url,
-                                'snippet': snippet,
-                                'vibe_score': vibe_score
-                            })
-                return results
+        except requests.exceptions.RequestException as exc:
+            logger.warning(
+                "serper_request_retrying",
+                query=query,
+                error=str(exc),
+                message=f"Retrying Serper query '{query}' after request failure: {exc}",
+            )
+            raise
+
+        if response.status_code in SERPER_RETRYABLE_STATUS_CODES:
+            error = requests.exceptions.HTTPError(
+                f"Serper transient error for '{query}': {response.status_code}",
+                response=response,
+            )
+            logger.warning(
+                "serper_transient_error",
+                query=query,
+                status_code=response.status_code,
+                message=f"Retrying Serper query '{query}' after HTTP {response.status_code}",
+            )
+            raise error
+
+        if response.status_code != 200:
+            logger.error(
+                "serper_error",
+                query=query,
+                status_code=response.status_code,
+                message=f"Serper error for '{query}': {response.status_code}",
+            )
+            query_drop_reasons[f"http_{response.status_code}"] += 1
+            return {
+                "query": query,
+                "ok": False,
+                "raw_results": 0,
+                "results": [],
+                "borderline_results": [],
+                "drop_reasons": query_drop_reasons,
+                "rejection_samples": query_samples,
+            }
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            logger.error(
+                "serper_invalid_json",
+                query=query,
+                error=str(exc),
+                message=f"Serper returned invalid JSON for '{query}'",
+            )
+            query_drop_reasons["invalid_json"] += 1
+            return {
+                "query": query,
+                "ok": False,
+                "raw_results": 0,
+                "results": [],
+                "borderline_results": [],
+                "drop_reasons": query_drop_reasons,
+                "rejection_samples": query_samples,
+            }
+
+        results = []
+        organic = data.get('organic') or []
+        for result in organic:
+            url = result.get('link', '')
+            # Skip blocked domains before any scoring or DB lookup
+            if _is_blocked_domain(url):
+                query_drop_reasons["blocked_domain"] += 1
+                _append_rejection_sample(
+                    query_samples,
+                    query_sample_keys,
+                    reason="blocked_domain",
+                    query=query,
+                    result=result,
+                    limit=sample_limit,
+                )
+                continue
+            # Skip if seen before
+            if is_site_seen(url):
+                query_drop_reasons["already_seen"] += 1
+                _append_rejection_sample(
+                    query_samples,
+                    query_sample_keys,
+                    reason="already_seen",
+                    query=query,
+                    result=result,
+                    limit=sample_limit,
+                )
+                continue
+            
+            # Score Meh vibe
+            title = result.get('title', '')
+            snippet = result.get('snippet', '')
+            vibe_score = score_meh_vibe(title, snippet)
+            candidate = {
+                'title': title,
+                'link': url,
+                'snippet': snippet,
+                'vibe_score': vibe_score,
+                'discovery_source': 'search',
+                'search_query': query,
+            }
+            
+            # Only include if score >= threshold
+            if vibe_score >= strict_vibe_threshold:
+                results.append(candidate)
+            elif vibe_score >= fallback_vibe_threshold:
+                query_drop_reasons["borderline_vibe"] += 1
+                query_borderline_results.append(candidate)
+                _append_rejection_sample(
+                    query_samples,
+                    query_sample_keys,
+                    reason="borderline_vibe",
+                    query=query,
+                    result=result,
+                    limit=sample_limit,
+                    vibe_score=vibe_score,
+                )
             else:
-                logger.error("serper_error", query=query, status_code=response.status_code, message=f"Serper error for '{query}': {response.status_code}")
-                return []
-        except Exception as e:
-            logger.error("serper_request_failed", query=query, error=str(e), message=f"Request failed for '{query}': {str(e)}")
-            return []
+                query_drop_reasons["low_vibe"] += 1
+                _append_rejection_sample(
+                    query_samples,
+                    query_sample_keys,
+                    reason="low_vibe",
+                    query=query,
+                    result=result,
+                    limit=sample_limit,
+                    vibe_score=vibe_score,
+                )
+
+        return {
+            "query": query,
+            "ok": True,
+            "raw_results": len(organic),
+            "results": results,
+            "borderline_results": query_borderline_results,
+            "drop_reasons": query_drop_reasons,
+            "rejection_samples": query_samples,
+        }
     
     # Run all queries in parallel
     all_results = []
+    borderline_results = []
     with ThreadPoolExecutor(max_workers=5) as executor:
         future_to_query = {executor.submit(search_query, query): query for query in Config.SEARCH_QUERIES}
         for future in as_completed(future_to_query):
-            all_results.extend(future.result())
+            query = future_to_query[future]
+            try:
+                query_result = future.result()
+                diagnostics["queries_succeeded" if query_result["ok"] else "queries_failed"] += 1
+                diagnostics["raw_search_results"] += query_result["raw_results"]
+                query_candidates[query] = len(query_result["results"])
+                query_borderline_candidates[query] = len(query_result["borderline_results"])
+                drop_reasons.update(query_result["drop_reasons"])
+                all_results.extend(query_result["results"])
+                borderline_results.extend(query_result["borderline_results"])
+                for sample in query_result["rejection_samples"]:
+                    if len(rejection_samples) >= sample_limit:
+                        break
+                    sample_key = (
+                        sample["reason"],
+                        normalize_url(sample.get("url", "")) or sample.get("title", ""),
+                    )
+                    if sample_key in rejection_sample_keys:
+                        continue
+                    rejection_samples.append(sample)
+                    rejection_sample_keys.add(sample_key)
+            except Exception as exc:
+                diagnostics["queries_failed"] += 1
+                drop_reasons["query_retry_exhausted"] += 1
+                query_candidates[query] = 0
+                query_borderline_candidates[query] = 0
+                logger.error(
+                    "serper_query_failed",
+                    query=query,
+                    error=str(exc),
+                    message=f"Serper query failed after retries: {query}",
+                )
+
+    relaxed_vibe_threshold_used = False
+    promoted_borderline_candidates = 0
+    if diagnostics["queries_succeeded"] > 0 and len(all_results) < min_live_candidates and borderline_results:
+        relaxed_vibe_threshold_used = True
+        promoted_borderline_candidates = len(borderline_results)
+        all_results.extend(borderline_results)
+        logger.info(
+            "search_relaxed_threshold",
+            "Relaxed search vibe threshold to recover low-yield discovery",
+            strict_vibe_threshold=strict_vibe_threshold,
+            fallback_vibe_threshold=fallback_vibe_threshold,
+            promoted_borderline_candidates=promoted_borderline_candidates,
+        )
     
     # Remove duplicates and sort by vibe score
     seen = set()
     unique_results = []
     for r in all_results:
-        if r['link'] not in seen:
-            seen.add(r['link'])
+        normalized_link = normalize_url(r['link'])
+        if normalized_link not in seen:
+            seen.add(normalized_link)
             unique_results.append(r)
+        else:
+            drop_reasons["duplicate_url"] += 1
     
     # Sort by vibe score (highest first)
     unique_results.sort(key=lambda x: x['vibe_score'], reverse=True)
@@ -268,11 +516,15 @@ def search_for_deal_sites(force_domains: frozenset = frozenset()):
     normal, quarantined = [], []
     for r in unique_results:
         domain = _db_extract_domain(r['link'])
+        status = get_source_status(domain)
+        r["source_status"] = status
+        r["force_included"] = domain in force_domains
         if domain in force_domains:
             normal.append(r)          # manual override: always include at normal priority
+            drop_reasons["force_included"] += 1
             continue
-        status = get_source_status(domain)
         if status == 'remove':
+            drop_reasons["source_status_remove"] += 1
             logger.info(
                 "source_skipped_remove",
                 f"Skipping {domain} (status=remove)",
@@ -280,22 +532,102 @@ def search_for_deal_sites(force_domains: frozenset = frozenset()):
             )
             continue
         elif status == 'quarantine':
+            drop_reasons["source_status_quarantine"] += 1
             quarantined.append(r)     # still eligible, but lower priority
         else:                         # keep or new
             normal.append(r)
     unique_results = normal + quarantined
 
-    log_search_complete(len(unique_results), 3)
-    
+    # ── Inject seed sites (known-good US deal sites) ─────────────────────────
+    seed_seen = {normalize_url(r['link']) for r in unique_results}
+    for seed in Config.SEED_DEAL_SITES:
+        url = seed['link']
+        if _is_blocked_domain(url):
+            drop_reasons["seed_blocked_domain"] += 1
+            continue
+        normalized_seed = normalize_url(url)
+        if normalized_seed not in seed_seen:
+            seed_entry = {
+                **seed,
+                'vibe_score': 7,
+                'discovery_source': 'seed',
+                'search_query': '',
+                'source_status': get_source_status(_db_extract_domain(url)),
+                'force_included': _db_extract_domain(url) in force_domains,
+            }   # seeds get priority vibe score
+            unique_results.insert(0, seed_entry)       # seeds go to front of queue
+            seed_seen.add(normalized_seed)
+        else:
+            drop_reasons["seed_duplicate"] += 1
+
+    search_pool = sum(1 for r in unique_results if r.get("discovery_source") == "search")
+    seed_pool = sum(1 for r in unique_results if r.get("discovery_source") == "seed")
+    if len(unique_results) > Config.MAX_CANDIDATES_PER_RUN:
+        drop_reasons["over_max_candidates"] += len(unique_results) - Config.MAX_CANDIDATES_PER_RUN
+
+    final_results = unique_results[:Config.MAX_CANDIDATES_PER_RUN]
+    selected_search = sum(1 for r in final_results if r.get("discovery_source") == "search")
+    selected_seed = sum(1 for r in final_results if r.get("discovery_source") == "seed")
+    live_discovery_empty = selected_search == 0
+    degraded_search = diagnostics["queries_failed"] > 0 and live_discovery_empty
+    low_yield_search = diagnostics["queries_succeeded"] > 0 and live_discovery_empty
+
+    diagnostics.update({
+        "query_candidates": query_candidates,
+        "query_borderline_candidates": query_borderline_candidates,
+        "drop_reasons": dict(drop_reasons),
+        "rejection_samples": rejection_samples,
+        "candidate_pool": len(unique_results),
+        "selected_candidates": len(final_results),
+        "search_candidates_pool": search_pool,
+        "seed_candidates_pool": seed_pool,
+        "selected_search_candidates": selected_search,
+        "selected_seed_candidates": selected_seed,
+        "live_discovery_empty": live_discovery_empty,
+        "degraded_search": degraded_search,
+        "low_yield_search": low_yield_search,
+        "relaxed_vibe_threshold_used": relaxed_vibe_threshold_used,
+        "promoted_borderline_candidates": promoted_borderline_candidates,
+    })
+    # Add a timestamp for this diagnostics snapshot
+    diagnostics["search_ts"] = datetime.now(timezone.utc).isoformat()
+    _LAST_SEARCH_DIAGNOSTICS = diagnostics
+
+    log_search_complete(
+        len(final_results),
+        fallback_vibe_threshold if relaxed_vibe_threshold_used else strict_vibe_threshold,
+    )
+    logger.info(
+        "search_diagnostics",
+        "Search diagnostics recorded",
+        **diagnostics,
+    )
+    if rejection_samples:
+        logger.info(
+            "search_rejection_samples",
+            "Sampled rejected search results",
+            samples=rejection_samples,
+        )
+    if degraded_search:
+        logger.warning(
+            "search_degraded",
+            "Live search degraded; current candidates are coming only from curated seeds",
+            queries_failed=diagnostics["queries_failed"],
+            selected_seed_candidates=selected_seed,
+        )
+    elif low_yield_search:
+        logger.warning(
+            "search_low_yield",
+            "Live search succeeded but found no non-seed discoveries",
+            queries_succeeded=diagnostics["queries_succeeded"],
+            drop_reasons=dict(drop_reasons),
+        )
+
     # Log individual sites
-    for result in unique_results:
-        log_site_scraped(result['link'], result['vibe_score'])
-    
-    # Mark sites as seen and return top candidates
-    for site in unique_results[:Config.MAX_CANDIDATES_PER_RUN]:
-        mark_site_seen(site['link'])
-    
-    return unique_results[:Config.MAX_CANDIDATES_PER_RUN]
+    for result in final_results:
+        log_site_scraped(result['link'], result.get('vibe_score', 4))
+
+    return final_results
 
 
 def _screenshot_path_for_url(url: str) -> Path:

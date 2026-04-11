@@ -23,6 +23,7 @@ from pathlib import Path
 
 from config import Config
 from logger import logger
+from scoring import CANDIDATE_SCORING_REFERENCE
 
 PUBLIC_DIR       = Path("public")
 INDEX_HTML       = PUBLIC_DIR / "index.html"
@@ -32,9 +33,63 @@ CANDIDATES_CSV   = PUBLIC_DIR / "candidates.csv"
 NOJEKYLL         = PUBLIC_DIR / ".nojekyll"
 
 CSV_COLUMNS = [
-    "site_name", "url", "deal_title", "deal_price", "original_price",
-    "quality_score", "accepted", "rejection_reason", "niche",
+    "site_name",
+    "url",
+    "snippet",
+    "discovery_source",
+    "source_status",
+    "vibe_score",
+    "deal_title",
+    "deal_price",
+    "original_price",
+    "meh_signals",
+    "meh_signal_hits",
+    "scrape_method",
+    "quality_score",
+    "niche",
+    "rationale",
+    "accepted",
+    "rejection_reason",
 ]
+
+
+def candidate_row_for_csv(c: dict) -> dict:
+    """Normalize types for CSV (booleans and optional numeric scores)."""
+    row = {**c}
+    row["accepted"] = "yes" if row.get("accepted") else "no"
+    if row.get("quality_score") is None:
+        row["quality_score"] = ""
+    return row
+
+
+def write_project_root_candidate_files(all_candidates: list[dict]) -> None:
+    """Write ``candidates.csv`` and ``candidates.txt`` at the repo root (scanner / CLI)."""
+    import os as _os
+    import shutil
+
+    _tmp = "candidates.csv.tmp"
+    with open(_tmp, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=CSV_COLUMNS, extrasaction="ignore", lineterminator="\n")
+        w.writeheader()
+        for c in all_candidates:
+            w.writerow(candidate_row_for_csv(c))
+    try:
+        _os.replace(_tmp, "candidates.csv")
+    except Exception:
+        shutil.copy2(_tmp, "candidates.csv")
+
+    lines: list[str] = []
+    if not all_candidates:
+        lines.append("NO CANDIDATES FOUND")
+    else:
+        lines.append("\t".join(CSV_COLUMNS))
+        for c in all_candidates:
+            rc = candidate_row_for_csv(c)
+            lines.append(
+                "\t".join(str(rc.get(col) if rc.get(col) is not None else "") for col in CSV_COLUMNS)
+            )
+    with open("candidates.txt", "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
 
 
 def _normalize_base_path(path: str) -> str:
@@ -61,6 +116,40 @@ def _pages_url_hint() -> str:
         return ""
     owner, name = repo.split("/", 1)
     return f"https://{owner}.github.io/{name}/"
+
+
+def _findings_table_rows(all_candidates: list[dict]) -> str:
+    """HTML table body rows for every analyzed URL (escaped)."""
+    if not all_candidates:
+        return (
+            '<tr><td colspan="8" style="text-align:center;color:#a9b1d6">'
+            "No analyzed URLs this run.</td></tr>"
+        )
+    lines: list[str] = []
+    for c in all_candidates:
+        vibe = c.get("vibe_score")
+        vibe_s = "—" if vibe is None or vibe == "" else html_module.escape(str(vibe))
+        qs = c.get("quality_score")
+        q_s = "—" if qs is None else html_module.escape(str(qs))
+        acc = c.get("accepted")
+        result = "yes" if acc else "no"
+        row_cls = "" if acc else "row-rejected"
+        name = html_module.escape(str(c.get("site_name") or ""))
+        niche = html_module.escape(str(c.get("niche") or ""))
+        reason = html_module.escape(str(c.get("rejection_reason") or ""))
+        rat = str(c.get("rationale") or "")
+        if len(rat) > 320:
+            rat = rat[:320] + "…"
+        rat_e = html_module.escape(rat)
+        url = c.get("url") or ""
+        link = html_module.escape(url)
+        lines.append(
+            f"<tr class='{row_cls}'>"
+            f"<td>{vibe_s}</td><td>{q_s}</td><td>{name}</td><td>{niche}</td>"
+            f"<td>{result}</td><td>{reason}</td><td class='rationale'>{rat_e}</td>"
+            f"<td><a href=\"{link}\" target=\"_blank\" rel=\"noopener\">link</a></td></tr>"
+        )
+    return "\n".join(lines)
 
 
 def export_daily_dashboard(
@@ -96,6 +185,8 @@ def export_daily_dashboard(
         "deals": deals,
         **({"pages_url_hint": hint} if hint else {}),
     }
+    if all_candidates is not None:
+        payload["candidates"] = all_candidates
 
     if Config.MEH_DASHBOARD_DRY_RUN:
         logger.info(
@@ -133,10 +224,15 @@ def export_daily_dashboard(
 
     if all_candidates is not None:
         CANDIDATES_JSON.write_text(
-            json.dumps({
-                "generated_at": generated,
-                "candidates":   all_candidates,
-            }, indent=2, ensure_ascii=False),
+            json.dumps(
+                {
+                    "generated_at": generated,
+                    "scoring": CANDIDATE_SCORING_REFERENCE,
+                    "candidates": all_candidates,
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
             encoding="utf-8",
         )
         buf = io.StringIO()
@@ -144,7 +240,7 @@ def export_daily_dashboard(
                                 lineterminator="\n")
         writer.writeheader()
         for c in all_candidates:
-            writer.writerow({**c, "accepted": "yes" if c.get("accepted") else "no"})
+            writer.writerow(candidate_row_for_csv(c))
         CANDIDATES_CSV.write_text(buf.getvalue(), encoding="utf-8")
 
     rows_html = []
@@ -181,6 +277,33 @@ def export_daily_dashboard(
             f"</td></tr>"
         )
 
+    findings_section = ""
+    if all_candidates is not None:
+        findings_body = _findings_table_rows(all_candidates)
+        findings_section = f"""
+  <h2 class="section">All analyzed URLs (accepted and rejected)</h2>
+  <p class="meta" style="margin-bottom:0.5rem;">{len(all_candidates)} finding(s) · full data in <a href="./candidates.json">candidates.json</a></p>
+  <div class="wrap-findings">
+  <table id="findings">
+    <thead>
+      <tr>
+        <th>Vibe</th>
+        <th>Q</th>
+        <th>Site</th>
+        <th>Niche</th>
+        <th>OK</th>
+        <th>Reason</th>
+        <th>Rationale</th>
+        <th>URL</th>
+      </tr>
+    </thead>
+    <tbody>
+{findings_body}
+    </tbody>
+  </table>
+  </div>
+"""
+
     base_tag = _base_tag_html()
     html_out = f"""<!DOCTYPE html>
 <html lang="en">
@@ -207,12 +330,16 @@ def export_daily_dashboard(
     tr.row-hot {{ box-shadow: inset 3px 0 0 #9ece6a; background: #1e2030; }}
     td.rationale {{ max-width: 28rem; line-height: 1.4; }}
     a {{ color: #7aa2f7; }}
+    h2.section {{ font-size: 1.1rem; margin: 1.5rem 0 0.5rem 0; color: #bb9af7; }}
+    tr.row-rejected {{ opacity: 0.72; }}
+    tr.row-rejected td {{ color: #a9b1d6; }}
+    .wrap-findings {{ overflow-x: auto; max-height: 28rem; overflow-y: auto; margin-bottom: 1.5rem; }}
   </style>
 </head>
 <body>
   <h1>Meh-Scanner — daily picks</h1>
   <p class="last-updated">Last updated: <time datetime="{html_module.escape(generated_iso)}">{html_module.escape(generated)}</time></p>
-  <p class="meta">{len(deals)} deal(s) · {candidates_count} candidates scanned · {round(runtime_seconds, 1)}s run · <a href="./latest.json">latest.json</a></p>
+  <p class="meta">{len(deals)} deal(s) · {candidates_count} candidates scanned · {round(runtime_seconds, 1)}s run · <a href="./latest.json">latest.json</a> · <a href="./candidates.json">candidates.json</a> · <a href="./candidates.csv">candidates.csv</a></p>
   <div class="toolbar">
     <label>Filter <input type="search" id="filterText" placeholder="Site, niche, rationale…" oninput="applyFilters()" autocomplete="off"/></label>
     <label>Min score <select id="minScore" onchange="applyFilters()">
@@ -239,6 +366,7 @@ def export_daily_dashboard(
 {table_body}
     </tbody>
   </table>
+{findings_section}
   <script>
     function sortCol(col) {{
       const table = document.getElementById('deals');

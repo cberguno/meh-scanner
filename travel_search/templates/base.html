@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Travel Search Tool</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f7f8fb; color: #1d2433; }
+    header { background: #1f5fbf; color: white; padding: 18px 24px; }
+    nav { padding: 14px 24px; background: #ffffff; border-bottom: 1px solid #dfe3ea; }
+    nav a { margin-right: 16px; color: #1f5fbf; text-decoration: none; }
+    main { max-width: 1000px; margin: 24px auto; padding: 0 24px; }
+    .card { background: white; border: 1px solid #e1e7ef; border-radius: 12px; padding: 20px; margin-bottom: 24px; box-shadow: 0 2px 12px rgba(40, 84, 143, 0.06); }
+    .error { color: #b00020; margin-bottom: 16px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    th, td { text-align: left; padding: 12px; border-bottom: 1px solid #eef1f6; }
+    th { background: #f5f8fc; }
+    input, select { width: 100%; padding: 10px 12px; border: 1px solid #c8d2e0; border-radius: 8px; margin-top: 8px; }
+    .field { margin-bottom: 16px; }
+    .button { border: none; background: #1f5fbf; color: white; padding: 12px 20px; border-radius: 10px; cursor: pointer; }
+    .button:hover { background: #174a92; }
+    .small { color: #5f6d80; font-size: 0.95rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Travel Search Tool</h1>
+    <p class="small">Flight and hotel search demo with reusable provider abstraction.</p>
+  </header>
+  <nav>
+    <a href="/">Home</a>
+    <a href="/flights">Flight Search</a>
+    <a href="/hotels">Hotel Search</a>
+  </nav>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
