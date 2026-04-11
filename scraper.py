@@ -74,7 +74,7 @@ def init_db():
     ''')
     
     # Clean up entries older than 120 days
-    cutoff_date = (datetime.now() - timedelta(days=120)).isoformat()
+    cutoff_date = (datetime.now() - timedelta(days=1)).isoformat()
     cursor.execute('DELETE FROM seen_sites WHERE last_seen < ?', (cutoff_date,))
     deleted = cursor.rowcount
     if deleted > 0:
