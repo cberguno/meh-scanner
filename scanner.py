@@ -52,6 +52,7 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
 
         logger.info("sites_found", f"Found {len(sites)} candidates", count=len(sites))
         sites = enrich_candidates(sites)
+        logger.info("debug_enriched", f"DEBUG enriched: {len(sites)} sites going to analysis", count=len(sites))
     except Exception as exc:
         return _fail(f"Search/enrich failed: {exc}", start)
 
@@ -59,6 +60,9 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
     try:
         logger.info("analysis_phase", f"Analyzing {len(sites)} sites…")
         analyses = analyze_sites_batch(sites)
+        logger.info("debug_analyses", f"DEBUG analysis done: {len(analyses)} results", count=len(analyses))
+        for i, _item in enumerate(analyses[:3]):
+            logger.info("debug_sample", f"DEBUG sample {i+1}: site={_item['site'].get('title','?')!r} raw={_item['analysis'][:300]!r}", index=i+1, site=_item['site'].get('title',''), raw=_item['analysis'][:300])
     except Exception as exc:
         return _fail(f"Analysis failed: {exc}", start)
 
@@ -70,6 +74,7 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
         try:
             parsed = json.loads(raw)
             score = parsed.get("quality_score", 0)
+            logger.info("debug_score", f"DEBUG score: {site.get('title','?')!r} → {score}", title=site.get('title',''), score=score)
             if score >= 6:
                 deals.append(apply_affiliate_url(_compute_roi({
                     "site_name":      site.get("title", ""),
@@ -87,6 +92,8 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
                 site=site.get("title"),
                 error=str(exc),
             )
+
+    logger.info("debug_filtered", f"DEBUG filter result: {len(deals)} deals passed score >= 6", count=len(deals))
 
     # ── Phase 3b: fire alerts for high-quality deals ────────────────────────
     check_and_fire_alerts(deals)
