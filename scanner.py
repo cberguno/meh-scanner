@@ -169,10 +169,20 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
 
         # ── Console ───────────────────────────────────────────────────────────
         print(f"\n=== SCAN CANDIDATES ({len(all_candidates)} total) ===")
-        for _line in _txt_lines[:11]:
-            print(_line)
-        if len(all_candidates) > 10:
-            print(f"[{len(all_candidates) - 10} more rows in candidates.csv / candidates.txt]")
+        if not all_candidates:
+            print("NO CANDIDATES FOUND")
+        else:
+            print("site_name | deal_title | deal_price | original_price | quality_score | accepted | reason")
+            for _c in all_candidates:
+                print(" | ".join([
+                    str(_c.get("site_name")        or ""),
+                    str(_c.get("deal_title")       or ""),
+                    str(_c.get("deal_price")       or ""),
+                    str(_c.get("original_price")   or ""),
+                    str(_c.get("quality_score")    if _c.get("quality_score") is not None else ""),
+                    "yes" if _c.get("accepted") else "no",
+                    str(_c.get("rejection_reason") or ""),
+                ]))
         print("=" * 60)
     except Exception as _exc:
         print(f"[candidates dump failed: {_exc}]")
