@@ -294,16 +294,17 @@ app = FastAPI(title="Meh-Scanner Dashboard", lifespan=lifespan)
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse("index.html", {
-        "request":  request,
-        "snapshot": state.get_snapshot(),
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={"snapshot": state.get_snapshot()},
+    )
 
 
 @app.get("/landing", response_class=HTMLResponse)
 async def landing(request: Request):
     """Public-facing MVP landing page."""
-    return templates.TemplateResponse("landing.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="landing.html")
 
 
 # ── SSE endpoint ──────────────────────────────────────────────────────────────
@@ -421,12 +422,11 @@ async def deals_partial(
         niche_filter=niche_filter,
         hq_only=hq_only,
     )
-    return templates.TemplateResponse("deals_table.html", {
-        "request":  request,
-        "deals":    filtered,
-        "total":    len(all_deals),
-        "filtered": len(filtered),
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="deals_table.html",
+        context={"deals": filtered, "total": len(all_deals), "filtered": len(filtered)},
+    )
 
 
 @app.get("/api/metrics_html", response_class=HTMLResponse)
@@ -436,13 +436,16 @@ async def metrics_html(request: Request):
     Called on load and on sse:scan-complete.
     """
     m = state.get_metrics()
-    return templates.TemplateResponse("metrics.html", {
-        "request":     request,
-        "total_deals": m["total_deals"],
-        "avg_score":   m["avg_score"],
-        "best_score":  m["best_score"],
-        "last_scan":   m["last_scan"],
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="metrics.html",
+        context={
+            "total_deals": m["total_deals"],
+            "avg_score":   m["avg_score"],
+            "best_score":  m["best_score"],
+            "last_scan":   m["last_scan"],
+        },
+    )
 
 
 @app.get("/api/sources_html", response_class=HTMLResponse)
@@ -451,10 +454,11 @@ async def sources_html(request: Request):
     Source quality table fragment.
     Called on load and on sse:scan-complete so the table refreshes after each scan.
     """
-    return templates.TemplateResponse("sources_table.html", {
-        "request": request,
-        "sources": get_source_stats(),
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="sources_table.html",
+        context={"sources": get_source_stats()},
+    )
 
 
 # ── action routes ─────────────────────────────────────────────────────────────
