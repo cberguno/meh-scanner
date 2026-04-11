@@ -304,7 +304,7 @@ async def index(request: Request):
 @app.get("/landing", response_class=HTMLResponse)
 async def landing(request: Request):
     """Public-facing MVP landing page."""
-    return templates.TemplateResponse(request=request, name="landing.html")
+    return templates.TemplateResponse(request=request, name="landing.html", context={})
 
 
 # ── SSE endpoint ──────────────────────────────────────────────────────────────
