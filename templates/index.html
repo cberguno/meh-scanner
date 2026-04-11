@@ -123,6 +123,19 @@
     </div>
   </div>
 
+  <!-- ── Missing API keys banner ─────────────────────────────────────────── -->
+  {% if missing_keys %}
+  <div class="w-full bg-warning/15 border-b border-warning/30 px-4 py-2" role="alert">
+    <div class="max-w-7xl mx-auto flex items-center gap-3 text-sm text-warning">
+      <span>⚠️</span>
+      <span>
+        Missing API keys: <strong>{{ missing_keys | join(", ") }}</strong> —
+        set these in Railway → Variables to enable scanning.
+      </span>
+    </div>
+  </div>
+  {% endif %}
+
   <!-- ── Main content ─────────────────────────────────────────────────────── -->
   <main class="flex-1 max-w-7xl w-full mx-auto px-4 py-8 space-y-6">
 

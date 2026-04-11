@@ -34,6 +34,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
 
+from config import Config
 from db import init_db, record_scan, archive_deals, get_recent_scans, get_source_stats, get_source_status
 from logger import logger
 from scanner import run_full_scan
@@ -270,6 +271,18 @@ async def lifespan(app: FastAPI):
     # ── startup ───────────────────────────────────────────────────────────────
     logger.info("dashboard_startup", "Dashboard starting…")
     init_db()
+
+    _missing = [k for k, v in [
+        ("SERPER_API_KEY",    Config.SERPER_API_KEY),
+        ("ANTHROPIC_API_KEY", Config.ANTHROPIC_API_KEY),
+    ] if not v]
+    if _missing:
+        logger.warning(
+            "missing_api_keys",
+            f"Missing required API keys: {', '.join(_missing)} — scans will not produce results",
+            missing_keys=_missing,
+        )
+
     state.load_deals_from_file()
     snap = state.get_snapshot()
     logger.info(
@@ -292,12 +305,19 @@ app = FastAPI(title="Meh-Scanner Dashboard", lifespan=lifespan)
 
 # ── page route ────────────────────────────────────────────────────────────────
 
+def _missing_keys() -> list[str]:
+    return [k for k, v in [
+        ("SERPER_API_KEY",    Config.SERPER_API_KEY),
+        ("ANTHROPIC_API_KEY", Config.ANTHROPIC_API_KEY),
+    ] if not v]
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={"snapshot": state.get_snapshot()},
+        context={"snapshot": state.get_snapshot(), "missing_keys": _missing_keys()},
     )
 
 
