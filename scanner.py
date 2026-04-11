@@ -139,29 +139,40 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
     _csv_cols = ["site_name","url","deal_title","deal_price","original_price",
                  "quality_score","accepted","rejection_reason","niche"]
     try:
+        # ── CSV ───────────────────────────────────────────────────────────────
         with open("candidates.csv", "w", newline="", encoding="utf-8") as _f:
             _w = _csv.DictWriter(_f, fieldnames=_csv_cols, extrasaction="ignore")
             _w.writeheader()
             for _c in all_candidates:
                 _w.writerow({**_c, "accepted": "yes" if _c.get("accepted") else "no"})
-        print(f"\n=== SCAN CANDIDATES ({len(all_candidates)} total) ===")
+
+        # ── Plain text ────────────────────────────────────────────────────────
+        _txt_lines = []
         if not all_candidates:
-            print("NO CANDIDATES FOUND")
+            _txt_lines.append("NO CANDIDATES FOUND")
         else:
-            _header = f"{'score':>5}  {'accepted':>8}  {'price':>8}  {'site':<30}  {'title':<40}  reason"
-            print(_header)
-            print("-" * len(_header))
-            for _c in all_candidates[:10]:
-                print(
-                    f"{str(_c.get('quality_score') or '?'):>5}  "
-                    f"{'yes' if _c.get('accepted') else 'no':>8}  "
-                    f"{str(_c.get('deal_price') or ''):>8}  "
-                    f"{str(_c.get('site_name') or '')[:30]:<30}  "
-                    f"{str(_c.get('deal_title') or '')[:40]:<40}  "
-                    f"{_c.get('rejection_reason') or ''}"
-                )
-            if len(all_candidates) > 10:
-                print(f"  ... and {len(all_candidates) - 10} more rows in candidates.csv")
+            _txt_lines.append("\t".join(_csv_cols))
+            for _c in all_candidates:
+                _txt_lines.append("\t".join([
+                    str(_c.get("site_name")        or ""),
+                    str(_c.get("url")              or ""),
+                    str(_c.get("deal_title")       or ""),
+                    str(_c.get("deal_price")       or ""),
+                    str(_c.get("original_price")   or ""),
+                    str(_c.get("quality_score")    if _c.get("quality_score") is not None else ""),
+                    "yes" if _c.get("accepted") else "no",
+                    str(_c.get("rejection_reason") or ""),
+                    str(_c.get("niche")            or ""),
+                ]))
+        with open("candidates.txt", "w", encoding="utf-8") as _f:
+            _f.write("\n".join(_txt_lines) + "\n")
+
+        # ── Console ───────────────────────────────────────────────────────────
+        print(f"\n=== SCAN CANDIDATES ({len(all_candidates)} total) ===")
+        for _line in _txt_lines[:11]:
+            print(_line)
+        if len(all_candidates) > 10:
+            print(f"[{len(all_candidates) - 10} more rows in candidates.csv / candidates.txt]")
         print("=" * 60)
     except Exception as _exc:
         print(f"[candidates dump failed: {_exc}]")
