@@ -22,10 +22,11 @@ from pathlib import Path
 from config import Config
 from logger import logger
 
-PUBLIC_DIR = Path("public")
-INDEX_HTML = PUBLIC_DIR / "index.html"
-LATEST_JSON = PUBLIC_DIR / "latest.json"
-NOJEKYLL = PUBLIC_DIR / ".nojekyll"
+PUBLIC_DIR       = Path("public")
+INDEX_HTML       = PUBLIC_DIR / "index.html"
+LATEST_JSON      = PUBLIC_DIR / "latest.json"
+CANDIDATES_JSON  = PUBLIC_DIR / "candidates.json"
+NOJEKYLL         = PUBLIC_DIR / ".nojekyll"
 
 
 def _normalize_base_path(path: str) -> str:
@@ -59,6 +60,7 @@ def export_daily_dashboard(
     *,
     candidates_count: int = 0,
     runtime_seconds: float = 0.0,
+    all_candidates: list[dict] | None = None,
 ) -> None:
     if not Config.MEH_DASHBOARD:
         logger.info("dashboard_skipped", message="MEH_DASHBOARD disabled")
@@ -120,6 +122,15 @@ def export_daily_dashboard(
         json.dumps(payload, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+
+    if all_candidates is not None:
+        CANDIDATES_JSON.write_text(
+            json.dumps({
+                "generated_at": generated,
+                "candidates":   all_candidates,
+            }, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
     rows_html = []
     for d in deals:

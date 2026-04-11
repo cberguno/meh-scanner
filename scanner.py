@@ -91,14 +91,15 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
             accepted = score >= 6
             logger.info("debug_score", f"DEBUG score: {site.get('title','?')!r} → {score}", title=site.get('title',''), score=score)
             all_candidates.append({
-                "site_name":      site.get("title", ""),
-                "url":            site.get("link", ""),
-                "deal_title":     site.get("deal_title", ""),
-                "deal_price":     site.get("deal_price", ""),
-                "original_price": site.get("original_price", ""),
-                "quality_score":  score,
-                "niche":          parsed.get("niche", ""),
-                "accepted":       accepted,
+                "site_name":        site.get("title", ""),
+                "url":              site.get("link", ""),
+                "deal_title":       site.get("deal_title", ""),
+                "deal_price":       site.get("deal_price", ""),
+                "original_price":   site.get("original_price", ""),
+                "quality_score":    score,
+                "niche":            parsed.get("niche", ""),
+                "accepted":         accepted,
+                "rejection_reason": "" if accepted else f"score {score} < 6",
             })
             if accepted:
                 _filtered += 1
@@ -114,14 +115,15 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
         except Exception as exc:
             _parse_fail += 1
             all_candidates.append({
-                "site_name":      site.get("title", ""),
-                "url":            site.get("link", ""),
-                "deal_title":     "",
-                "deal_price":     "",
-                "original_price": "",
-                "quality_score":  None,
-                "niche":          "",
-                "accepted":       False,
+                "site_name":        site.get("title", ""),
+                "url":              site.get("link", ""),
+                "deal_title":       "",
+                "deal_price":       "",
+                "original_price":   "",
+                "quality_score":    None,
+                "niche":            "",
+                "accepted":         False,
+                "rejection_reason": "analysis parse error",
             })
             logger.warning(
                 "analysis_parse_failed",
@@ -157,7 +159,8 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
     # ── Phase 4: export dashboard ────────────────────────────────────────────
     runtime = time.time() - start
     try:
-        export_daily_dashboard(deals, candidates_count=len(sites), runtime_seconds=runtime)
+        export_daily_dashboard(deals, candidates_count=len(sites), runtime_seconds=runtime,
+                               all_candidates=all_candidates)
     except Exception as exc:
         logger.error("dashboard_export_failed", f"Export failed (continuing): {exc}", error=str(exc))
 

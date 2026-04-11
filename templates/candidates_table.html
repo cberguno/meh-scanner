@@ -17,6 +17,7 @@
           <th class="hidden sm:table-cell w-24">Price</th>
           <th class="hidden sm:table-cell w-24">Was</th>
           <th class="w-24 text-center">Result</th>
+          <th class="hidden md:table-cell">Reason</th>
         </tr>
       </thead>
       <tbody>
@@ -53,6 +54,9 @@
             {% else %}
               <span class="badge badge-ghost badge-sm">rejected</span>
             {% endif %}
+          </td>
+          <td class="hidden md:table-cell text-xs text-base-content/50">
+            {{ c.rejection_reason or "" }}
           </td>
         </tr>
         {% endfor %}

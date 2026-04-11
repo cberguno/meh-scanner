@@ -134,6 +134,18 @@ class DashboardState:
         with self._lock:
             return list(self.last_candidates)
 
+    def load_candidates_from_file(self) -> None:
+        """Load last scan candidates from public/candidates.json (persists across restarts)."""
+        path = Path("public") / "candidates.json"
+        try:
+            if path.exists():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                with self._lock:
+                    self.last_candidates = data.get("candidates", [])
+        except Exception as exc:
+            logger.error("load_candidates_failed", f"Could not load candidates.json: {exc}",
+                         error=str(exc))
+
     def load_deals_from_file(self) -> None:
         """
         Reload deals from public/latest.json.
@@ -216,6 +228,7 @@ async def _run_scan_background(force_domains: frozenset = frozenset()) -> None:
 
         if result["success"]:
             state.load_deals_from_file()
+            state.load_candidates_from_file()
             deals = result.get("deals") or []
 
             # Persist to database
@@ -290,6 +303,7 @@ async def lifespan(app: FastAPI):
     # ── startup ───────────────────────────────────────────────────────────────
     logger.info("dashboard_startup", "Dashboard starting…")
     init_db()
+    state.load_candidates_from_file()
 
     _missing = [k for k, v in [
         ("SERPER_API_KEY",    Config.SERPER_API_KEY),
