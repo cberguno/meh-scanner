@@ -1,0 +1,90 @@
+<!-- Deals table partial — rendered by /api/deals -->
+{% if not deals %}
+  <div class="alert alert-info">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+    <span>
+      {% if total == 0 %}
+        No deals found yet — run a scan to get started.
+      {% else %}
+        No deals match these filters ({{ total }} total available).
+      {% endif %}
+    </span>
+  </div>
+{% else %}
+  <p class="text-xs text-base-content/50 mb-2">
+    Showing {{ filtered }} of {{ total }} deal{% if total != 1 %}s{% endif %}
+  </p>
+  <div class="overflow-x-auto">
+    <table class="table table-sm table-zebra w-full">
+      <thead>
+        <tr>
+          <th class="w-16">Score</th>
+          <th>Site</th>
+          <th class="hidden md:table-cell">Niche</th>
+          <th class="hidden sm:table-cell w-24">Price</th>
+          <th class="hidden sm:table-cell w-24">Was</th>
+          <th class="hidden lg:table-cell w-28">Est. ROI</th>
+          <th>Rationale</th>
+          <th class="w-12">Link</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for deal in deals %}
+        {% set score = deal.quality_score | int %}
+        <tr class="hover">
+          <td>
+            {% if score >= 8 %}
+              <span class="badge badge-success font-bold">{{ score }}</span>
+            {% elif score >= 6 %}
+              <span class="badge badge-warning font-bold">{{ score }}</span>
+            {% else %}
+              <span class="badge badge-error font-bold">{{ score }}</span>
+            {% endif %}
+          </td>
+          <td class="font-semibold max-w-[10rem] truncate" title="{{ deal.site_name }}">
+            {{ deal.site_name or "—" }}
+          </td>
+          <td class="hidden md:table-cell text-base-content/60 text-xs">
+            {{ deal.niche or "—" }}
+          </td>
+          <td class="hidden sm:table-cell text-success font-mono text-xs">
+            {{ deal.deal_price or "—" }}
+          </td>
+          <td class="hidden sm:table-cell text-base-content/50 font-mono text-xs">
+            {% if deal.original_price %}
+              <span class="line-through">{{ deal.original_price }}</span>
+            {% else %}—{% endif %}
+          </td>
+          <td class="hidden lg:table-cell text-xs font-mono">
+            {% if deal.roi_pct is not none %}
+              <span class="{% if deal.roi_pct >= 30 %}text-success font-semibold{% else %}text-base-content/60{% endif %}">
+                +${{ "%.2f"|format(deal.profit) }}&nbsp;({{ deal.roi_pct }}%)
+              </span>
+            {% else %}—{% endif %}
+          </td>
+          <td class="max-w-sm">
+            <p class="line-clamp-2 text-xs text-base-content/80 leading-relaxed">
+              {{ deal.rationale or "" }}
+            </p>
+          </td>
+          <td>
+            {% set link_url = deal.affiliate_url if deal.affiliate_url else deal.url %}
+            {% if link_url %}
+            <a
+              href="{{ link_url }}"
+              target="_blank"
+              rel="noopener noreferrer sponsored"
+              class="btn btn-xs btn-ghost text-primary"
+              {% if deal.affiliate_url %}
+              title="Affiliate link"
+              onclick="navigator.sendBeacon('/api/track_click', JSON.stringify({url:'{{ link_url }}'}))"
+              {% endif %}
+            >↗{% if deal.affiliate_url %}<sup class="text-xs opacity-50">*</sup>{% endif %}</a>
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endif %}

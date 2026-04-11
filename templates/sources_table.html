@@ -1,0 +1,46 @@
+<!-- Source quality partial — rendered by /api/sources_html -->
+{% if not sources %}
+  <p class="text-xs text-base-content/50 py-2">
+    No source data yet — stats accumulate after each scan run.
+  </p>
+{% else %}
+  <p class="text-xs text-base-content/50 mb-2">
+    {{ sources | length }} source{% if sources | length != 1 %}s{% endif %} tracked
+  </p>
+  <div class="overflow-x-auto">
+    <table class="table table-sm table-zebra w-full text-xs">
+      <thead>
+        <tr>
+          <th>Domain</th>
+          <th class="w-16 text-center">Scans</th>
+          <th class="w-16 text-center">Deals</th>
+          <th class="w-24 text-center">Retention</th>
+          <th class="w-28 text-center">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in sources %}
+        <tr class="hover">
+          <td class="font-mono text-base-content/80">{{ s.domain }}</td>
+          <td class="text-center">{{ s.scans_seen }}</td>
+          <td class="text-center">{{ s.deals_found }}</td>
+          <td class="text-center font-mono">
+            {{ "%.0f%%"|format(s.retention_score * 100) }}
+          </td>
+          <td class="text-center">
+            {% if s.status == "keep" %}
+              <span class="badge badge-success badge-sm">keep</span>
+            {% elif s.status == "quarantine" %}
+              <span class="badge badge-warning badge-sm">quarantine</span>
+            {% elif s.status == "remove" %}
+              <span class="badge badge-error badge-sm">remove</span>
+            {% else %}
+              <span class="badge badge-ghost badge-sm">new</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endif %}

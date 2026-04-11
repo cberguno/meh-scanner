@@ -4,6 +4,15 @@
 __pycache__/
 *.pyc
 logs/
+data/
+seen_sites.db
+public/index.html
+public/latest.json
+public/.nojekyll
+
+# IDE / tool dirs
+.cursor/
+.claude/
 
 # OS
 .DS_Store

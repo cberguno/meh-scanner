@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="night">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meh-Scanner — High-ROI Deals, Daily</title>
+  <link href="https://cdn.jsdelivr.net/npm/daisyui@4.10.1/dist/full.min.css" rel="stylesheet"/>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .hero-gradient {
+      background: radial-gradient(ellipse at 50% 0%, oklch(0.3 0.08 250 / 0.35) 0%, transparent 70%);
+    }
+    .score-badge { font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body class="bg-base-200 min-h-screen flex flex-col">
+
+  <!-- ── Nav ──────────────────────────────────────────────────────────────── -->
+  <nav class="navbar bg-base-100 shadow px-6">
+    <div class="flex-1">
+      <span class="text-lg font-bold tracking-tight">📊 Meh-Scanner</span>
+    </div>
+    <div class="flex-none">
+      <a href="#pricing" class="btn btn-primary btn-sm">Get Early Access</a>
+    </div>
+  </nav>
+
+  <!-- ── Hero ─────────────────────────────────────────────────────────────── -->
+  <section class="hero-gradient py-20 px-4 text-center">
+    <div class="max-w-2xl mx-auto space-y-6">
+      <div class="badge badge-outline badge-info text-xs tracking-wide">Early Access · $10/month</div>
+
+      <h1 class="text-4xl md:text-5xl font-extrabold leading-tight">
+        Stop wasting time on<br>
+        <span class="text-primary">bad deals.</span>
+      </h1>
+
+      <p class="text-xl text-base-content/70 max-w-lg mx-auto">
+        We only show the ones worth buying — AI-scored, ROI-verified,
+        sourced from trusted indie deal sites only.
+      </p>
+
+      <div class="flex flex-col sm:flex-row justify-center gap-3 pt-2">
+        <a href="#pricing" class="btn btn-primary btn-lg">
+          Get Early Access — $10/month
+        </a>
+        <a href="/dashboard" class="btn btn-outline btn-lg">
+          See the Dashboard →
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Problem ───────────────────────────────────────────────────────────── -->
+  <section class="py-14 px-4 bg-base-100">
+    <div class="max-w-3xl mx-auto text-center space-y-4">
+      <h2 class="text-2xl font-bold">The problem with deal sites</h2>
+      <p class="text-base-content/65 leading-relaxed max-w-xl mx-auto">
+        Slickdeals, Honey, and coupon aggregators show you <em>everything</em>.
+        You get 200 alerts a day and still miss the one deal actually worth
+        buying.  Generic marketplaces bury single-product gems under
+        sponsored noise.
+      </p>
+      <p class="text-base-content/65 leading-relaxed max-w-xl mx-auto">
+        We track indie "one deal a day" sites — the Meh-style stores that
+        sell <strong>one item per day</strong> with real personality, clear
+        pricing, and actual value.  Then we filter those down to only the
+        ones that score 8 or higher.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── Who it's for ──────────────────────────────────────────────────────── -->
+  <section class="py-14 px-4">
+    <div class="max-w-3xl mx-auto text-center space-y-4">
+      <h2 class="text-2xl font-bold">Who it's for</h2>
+      <div class="grid sm:grid-cols-3 gap-4 mt-6 text-left">
+        <div class="card bg-base-100 shadow p-5 space-y-2">
+          <div class="text-2xl">🔄</div>
+          <h3 class="font-semibold">Resellers</h3>
+          <p class="text-sm text-base-content/60">
+            You need deals where the ROI math is visible upfront.
+            We show deal price, original price, and estimated profit
+            on every card.
+          </p>
+        </div>
+        <div class="card bg-base-100 shadow p-5 space-y-2">
+          <div class="text-2xl">🎁</div>
+          <h3 class="font-semibold">Gift hunters</h3>
+          <p class="text-sm text-base-content/60">
+            You want one great thing, not a wall of mediocre discounts.
+            Every deal we surface has a real rationale — not just a
+            percentage off.
+          </p>
+        </div>
+        <div class="card bg-base-100 shadow p-5 space-y-2">
+          <div class="text-2xl">🤓</div>
+          <h3 class="font-semibold">Deal enthusiasts</h3>
+          <p class="text-sm text-base-content/60">
+            You love the Meh / Woot format — one quirky item, clear copy,
+            good price.  We find more sites like that so you don't have to.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Benefits ──────────────────────────────────────────────────────────── -->
+  <section class="py-14 px-4 bg-base-100">
+    <div class="max-w-2xl mx-auto space-y-6">
+      <h2 class="text-2xl font-bold text-center">Why it's different</h2>
+      <ul class="space-y-4 mt-6">
+        <li class="flex gap-4 items-start">
+          <span class="badge badge-success mt-0.5 shrink-0">✓</span>
+          <div>
+            <strong>Only high-ROI deals (score 8+, verified pricing)</strong>
+            <p class="text-sm text-base-content/60 mt-0.5">
+              Every deal is scored by AI against a strict rubric.  Score below 8?
+              It never reaches you.  Original price missing?  Filtered out.
+            </p>
+          </div>
+        </li>
+        <li class="flex gap-4 items-start">
+          <span class="badge badge-success mt-0.5 shrink-0">✓</span>
+          <div>
+            <strong>Real-time Telegram alerts — no refreshing required</strong>
+            <p class="text-sm text-base-content/60 mt-0.5">
+              The moment a qualifying deal is found you get a Telegram message
+              with price, ROI %, score, and a direct link.  One deal, one tap.
+            </p>
+          </div>
+        </li>
+        <li class="flex gap-4 items-start">
+          <span class="badge badge-success mt-0.5 shrink-0">✓</span>
+          <div>
+            <strong>Source trust scoring — we track which sites actually deliver</strong>
+            <p class="text-sm text-base-content/60 mt-0.5">
+              Sites that consistently produce bad deals get demoted automatically.
+              Your feed improves over time as the system learns what's worth watching.
+            </p>
+          </div>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ── Dashboard preview ─────────────────────────────────────────────────── -->
+  <section class="py-14 px-4">
+    <div class="max-w-4xl mx-auto space-y-6 text-center">
+      <h2 class="text-2xl font-bold">The dashboard</h2>
+      <p class="text-base-content/60 text-sm">
+        Every deal shows score, price, original price, estimated ROI, and
+        a one-sentence rationale.  Filter by score or toggle HQ-only mode
+        to see only the best of the best.
+      </p>
+
+      <!-- Placeholder / mock deal cards -->
+      <div class="overflow-x-auto rounded-xl shadow border border-base-300">
+        <table class="table table-sm w-full bg-base-100 text-left">
+          <thead class="bg-base-200 text-xs uppercase tracking-wide">
+            <tr>
+              <th class="w-16">Score</th>
+              <th>Site</th>
+              <th>Niche</th>
+              <th>Price</th>
+              <th>Was</th>
+              <th>Est. ROI</th>
+              <th class="max-w-sm">Rationale</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="hover">
+              <td><span class="badge badge-success font-bold score-badge">9</span></td>
+              <td class="font-semibold">MehDrop</td>
+              <td class="text-base-content/60 text-xs">Tech / Audio</td>
+              <td class="text-success font-mono text-xs">$49.99</td>
+              <td class="text-base-content/50 font-mono text-xs"><span class="line-through">$99.99</span></td>
+              <td class="font-mono text-xs text-success font-semibold">+$50.00 (100.0%)</td>
+              <td class="text-xs text-base-content/70 max-w-xs">Wireless earbuds with ANC for half the usual price — verified retail comp, ships same day.</td>
+            </tr>
+            <tr class="hover">
+              <td><span class="badge badge-success font-bold score-badge">8</span></td>
+              <td class="font-semibold">One Thing Daily</td>
+              <td class="text-base-content/60 text-xs">Home / Kitchen</td>
+              <td class="text-success font-mono text-xs">$24.00</td>
+              <td class="text-base-content/50 font-mono text-xs"><span class="line-through">$59.00</span></td>
+              <td class="font-mono text-xs text-success font-semibold">+$35.00 (145.8%)</td>
+              <td class="text-xs text-base-content/70 max-w-xs">Cast iron skillet at a price that makes sense — single SKU, witty copy, solid brand.</td>
+            </tr>
+            <tr class="hover opacity-40">
+              <td><span class="badge badge-warning font-bold score-badge">6</span></td>
+              <td class="font-semibold">DailySteals</td>
+              <td class="text-base-content/60 text-xs">Electronics</td>
+              <td class="text-success font-mono text-xs">$39.99</td>
+              <td class="text-base-content/50 font-mono text-xs">—</td>
+              <td class="font-mono text-xs">—</td>
+              <td class="text-xs text-base-content/70 max-w-xs">Multi-item storefront, no single focus. Filtered out in HQ mode.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="text-xs text-base-content/40">
+        Row 3 is filtered out in HQ-only mode. Live dashboard updates automatically after each scan.
+        Links marked * are affiliate links — we may earn a commission at no extra cost to you.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── Pricing ────────────────────────────────────────────────────────────── -->
+  <section id="pricing" class="py-20 px-4 bg-base-100">
+    <div class="max-w-sm mx-auto text-center space-y-6">
+      <h2 class="text-2xl font-bold">Simple pricing</h2>
+
+      <div class="card bg-base-200 shadow-xl border border-primary/30">
+        <div class="card-body items-center gap-3">
+          <div class="badge badge-primary">Early Access</div>
+          <div class="flex items-end gap-1 leading-none">
+            <span class="text-5xl font-extrabold">$10</span>
+            <span class="text-base-content/50 mb-1">/month</span>
+          </div>
+          <ul class="text-sm text-base-content/70 space-y-1 text-left w-full mt-2">
+            <li>✓ Daily high-ROI deal scan</li>
+            <li>✓ Telegram alerts for qualifying deals</li>
+            <li>✓ Live dashboard with ROI estimates</li>
+            <li>✓ HQ-only filter mode</li>
+            <li>✓ Source trust scoring</li>
+          </ul>
+          <a href="mailto:cberguno@gmail.com?subject=Meh%20Scanner%20Early%20Access"
+             class="btn btn-primary w-full mt-4"
+             onclick="navigator.sendBeacon('/api/track_cta')"
+>
+            Get Early Access →
+          </a>
+          <p class="text-xs text-base-content/40">
+            No account system yet — reply to confirm and we'll onboard you manually.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Footer ────────────────────────────────────────────────────────────── -->
+  <footer class="footer footer-center py-6 bg-base-200 text-base-content/40 text-xs gap-1">
+    <p>Meh-Scanner — finding the 1 in 20 deals actually worth your money.</p>
+    <p>
+      <a href="/" class="link link-hover">Dashboard</a>
+      &nbsp;·&nbsp;
+      <a href="./public/latest.json" class="link link-hover">latest.json</a>
+    </p>
+  </footer>
+
+</body>
+</html>

@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="night">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meh-Scanner Dashboard</title>
+
+  <!-- DaisyUI + Tailwind -->
+  <link href="https://cdn.jsdelivr.net/npm/daisyui@4.10.1/dist/full.min.css" rel="stylesheet"/>
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- HTMX 2 + SSE extension
+       htmx-ext-sse manages ONE EventSource per tab.
+       It fires "sse:event-name" custom events on elements with hx-trigger="sse:..."
+       and also fires htmx:sseMessage on the sse-connect element for JS hooks. -->
+  <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.8/dist/htmx.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/htmx-ext-sse@2.2.4/sse.js"></script>
+
+  <style>
+    /* ── HTMX loading indicators ─────────────────────────────────────────── */
+    /* Hidden by default; visible while parent element has an active request  */
+    .htmx-indicator                  { display: none; }
+    .htmx-request .htmx-indicator    { display: inline-flex; }
+    /* Scan button spinner is its own htmx-request, so needs explicit rule    */
+    #scan-btn.htmx-request .htmx-indicator { display: inline-flex; }
+
+    /* ── Smooth content swaps ────────────────────────────────────────────── */
+    .htmx-swapping { opacity: 0; transition: opacity 120ms ease-out; }
+
+    /* ── Toast slide-in ──────────────────────────────────────────────────── */
+    @keyframes slideDown {
+      from { opacity: 0; transform: translateY(-0.4rem); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .toast-item { animation: slideDown 0.22s ease-out; }
+  </style>
+</head>
+
+<!--
+  hx-ext="sse"            — activates htmx-ext-sse for this subtree
+  sse-connect="/api/events" — opens ONE EventSource connection for the tab
+
+  Elements anywhere inside <body> can now use:
+    hx-trigger="sse:scan-started"   to react to scan-started SSE events
+    hx-trigger="sse:scan-complete"  to react to scan-complete SSE events
+    hx-trigger="sse:status-update"  to react to the initial sync event
+
+  htmx:sseMessage is dispatched on <body> so the JS block below can listen
+  for UI-only side-effects (toast, button state, scanning banner).
+-->
+<body
+  class="bg-base-200 min-h-screen flex flex-col"
+  hx-ext="sse"
+  sse-connect="/api/events"
+>
+
+  <!-- ── Toast container ──────────────────────────────────────────────────── -->
+  <div id="toasts" class="fixed top-16 right-4 z-50 flex flex-col gap-2 w-80 pointer-events-none"></div>
+
+  <!--
+    Hidden sentinel: registers the status-update SSE event listener on the
+    EventSource so htmx:sseMessage fires for status-update on body.
+    hx-swap="none" suppresses DOM mutation; hx-get="/api/status" is a
+    lightweight JSON ping — the real UI update is handled by the
+    htmx:sseMessage listener on <body>.
+  -->
+  <span
+    aria-hidden="true"
+    style="display:none"
+    hx-trigger="sse:status-update"
+    hx-get="/api/status"
+    hx-swap="none"
+    hx-target="this"
+  ></span>
+
+  <!-- ── Header ───────────────────────────────────────────────────────────── -->
+  <header class="navbar bg-base-100 shadow sticky top-0 z-40 px-4">
+    <div class="flex-1 gap-3 min-w-0">
+      <span class="text-xl font-bold shrink-0">📊 Meh-Scanner</span>
+
+      <!--
+        Status badge.
+        hx-trigger covers three moments:
+          load              — initial render (SSE may not have arrived yet)
+          sse:scan-started  — immediately when a scan begins
+          sse:scan-complete — immediately when a scan ends
+        hx-get fetches a tiny HTML fragment ("/api/status_html") and swaps
+        the badge's inner content.  No polling required.
+      -->
+      <span
+        id="status-badge"
+        hx-get="/api/status_html"
+        hx-trigger="load, sse:scan-started, sse:scan-complete"
+        hx-swap="innerHTML"
+      >
+        <span class="badge badge-ghost text-xs">connecting…</span>
+      </span>
+    </div>
+
+    <div class="flex-none text-sm text-base-content/50 truncate" id="last-updated">
+      {% if snapshot.last_scan_time %}Last scan: {{ snapshot.last_scan_time }}{% endif %}
+    </div>
+  </header>
+
+  <!-- ── Scanning-in-progress banner ─────────────────────────────────────── -->
+  <!--
+    Hidden by default; shown/hidden by JS via the htmx:sseMessage handler below.
+    Displayed when scan-started arrives; hidden when scan-complete arrives.
+    Also shown on status-update when scan_in_progress is true (mid-scan reload).
+  -->
+  <div
+    id="scan-banner"
+    class="hidden w-full bg-info/15 border-b border-info/30 px-4 py-2"
+    role="status"
+    aria-live="polite"
+  >
+    <div class="max-w-7xl mx-auto flex items-center gap-3 text-sm text-info">
+      <span class="loading loading-spinner loading-xs shrink-0"></span>
+      <span>
+        Scan in progress — searching and analysing deal sites.
+        This may take a few minutes. Deals will update automatically when done.
+      </span>
+    </div>
+  </div>
+
+  <!-- ── Main content ─────────────────────────────────────────────────────── -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 py-8 space-y-6">
+
+    <!-- ── Metrics cards ────────────────────────────────────────────────────
+         hx-trigger="load, sse:scan-complete":
+           • "load"             — fetch on first render
+           • "sse:scan-complete"— re-fetch when the SSE event arrives; htmx-ext-sse
+                                  fires the "sse:scan-complete" trigger on this element
+                                  automatically because it's inside the sse-connect body
+    -->
+    <section
+      id="metrics"
+      hx-get="/api/metrics_html"
+      hx-trigger="load, sse:scan-complete"
+      hx-swap="innerHTML"
+    >
+      <!-- Skeleton placeholder shown while the first fetch is in flight -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {% for _ in range(4) %}
+        <div class="card bg-base-100 shadow">
+          <div class="card-body py-4">
+            <div class="skeleton h-3 w-20 mb-3 rounded"></div>
+            <div class="skeleton h-8 w-14 rounded"></div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <!-- ── Scan control ──────────────────────────────────────────────────── -->
+    <section class="card bg-base-100 shadow">
+      <div class="card-body py-4 flex-row flex-wrap items-center gap-4">
+
+        <!--
+          hx-post="/api/scan" — POST to start background scan
+          hx-on:htmx:beforeRequest — disable button + clear error before POSTing
+          hx-on:htmx:afterRequest  — handle 200 (scan started) or 409 (already running)
+        -->
+        <button
+          id="scan-btn"
+          class="btn btn-primary gap-2"
+          hx-post="/api/scan"
+          hx-on:htmx:beforeRequest="onScanStart()"
+          hx-on:htmx:afterRequest="onScanResponse(event)"
+        >
+          <span class="htmx-indicator loading loading-spinner loading-sm"></span>
+          Run Scan Now
+        </button>
+
+        <span class="text-sm text-base-content/60">
+          Scans also run automatically every day at 09:00 UTC via GitHub Actions.
+        </span>
+
+        <div id="scan-error" class="text-error text-sm hidden"></div>
+      </div>
+    </section>
+
+    <!-- ── Filter form ───────────────────────────────────────────────────── -->
+    <!--
+      The form is a separate section from the deals table.
+      Each interactive control has its own hx-trigger for immediate feedback.
+      Both controls include "#filter-form" so the full filter state is always
+      sent — including when the deals table is refreshed via SSE (see below).
+    -->
+    <section class="card bg-base-100 shadow">
+      <div class="card-body py-4">
+        <form id="filter-form" class="flex flex-wrap gap-4 items-end">
+
+          <div class="form-control">
+            <label class="label py-0">
+              <span class="label-text text-xs">Search</span>
+            </label>
+            <input
+              type="search"
+              name="search_query"
+              placeholder="site, niche, rationale…"
+              class="input input-bordered input-sm bg-base-200 w-52"
+              hx-get="/api/deals"
+              hx-trigger="keyup changed delay:350ms, search"
+              hx-target="#deals-container"
+              hx-swap="innerHTML"
+              hx-include="#filter-form"
+              hx-indicator="#table-spinner"
+            />
+          </div>
+
+          <div class="form-control">
+            <label class="label py-0">
+              <span class="label-text text-xs">Min score</span>
+            </label>
+            <select
+              name="min_score"
+              class="select select-bordered select-sm bg-base-200"
+              hx-get="/api/deals"
+              hx-trigger="change"
+              hx-target="#deals-container"
+              hx-swap="innerHTML"
+              hx-include="#filter-form"
+              hx-indicator="#table-spinner"
+            >
+              <option value="0">Any</option>
+              <option value="6" selected>6+</option>
+              <option value="7">7+</option>
+              <option value="8">8+</option>
+            </select>
+          </div>
+
+          <div class="form-control">
+            <label class="label py-0">
+              <span class="label-text text-xs">Quality</span>
+            </label>
+            <label
+              class="label cursor-pointer gap-2 h-8"
+              title="score >= 8, original price known, source trusted (keep or new)"
+            >
+              <input
+                type="checkbox"
+                name="hq_only"
+                value="true"
+                class="toggle toggle-sm toggle-success"
+                hx-get="/api/deals"
+                hx-trigger="change"
+                hx-target="#deals-container"
+                hx-swap="innerHTML"
+                hx-include="#filter-form"
+                hx-indicator="#table-spinner"
+              />
+              <span class="text-xs font-medium">HQ only</span>
+            </label>
+          </div>
+
+          <div class="form-control">
+            <label class="label py-0"><span class="label-text text-xs">&nbsp;</span></label>
+            <button
+              type="button"
+              class="btn btn-sm btn-outline gap-2"
+              hx-get="/api/deals"
+              hx-target="#deals-container"
+              hx-swap="innerHTML"
+              hx-include="#filter-form"
+              hx-indicator="#table-spinner"
+            >
+              <span class="htmx-indicator loading loading-spinner loading-xs" id="table-spinner"></span>
+              Refresh
+            </button>
+          </div>
+
+        </form>
+      </div>
+    </section>
+
+    <!-- ── Affiliate disclosure ────────────────────────────────────────────── -->
+    <p class="text-xs text-base-content/40 px-1">
+      Some links are affiliate links&nbsp;(*). We may earn a small commission
+      at no extra cost to you. This never affects which deals are shown or
+      their scores.
+    </p>
+
+    <!-- ── Deals table ───────────────────────────────────────────────────── -->
+    <!--
+      hx-trigger="load, sse:scan-complete":
+        • "load"             — fetch initial deals on page load
+        • "sse:scan-complete"— re-fetch deals when the SSE event fires
+
+      hx-include="#filter-form":
+        Serialises all inputs in #filter-form and appends them as query params.
+        This means when scan-complete triggers a refresh, the user's active
+        search/score filters are preserved automatically.
+    -->
+    <section class="card bg-base-100 shadow">
+      <div class="card-body">
+        <h2 class="card-title text-base mb-2">Deals</h2>
+        <div
+          id="deals-container"
+          hx-get="/api/deals"
+          hx-include="#filter-form"
+          hx-trigger="load, sse:scan-complete"
+          hx-swap="innerHTML"
+        >
+          <div class="flex justify-center py-10">
+            <span class="loading loading-spinner loading-lg text-primary"></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Source quality ──────────────────────────────────────────────────── -->
+    <!--
+      Collapsible: closed by default so it doesn't crowd the main deal view.
+      hx-trigger="load, sse:scan-complete" keeps it in sync with scan results.
+    -->
+    <section class="card bg-base-100 shadow">
+      <div class="card-body py-3">
+        <details>
+          <summary class="card-title text-base cursor-pointer select-none list-none flex items-center gap-2">
+            <span>Source Quality</span>
+            <span class="text-xs font-normal text-base-content/40">(click to expand)</span>
+          </summary>
+          <div
+            id="sources-container"
+            hx-get="/api/sources_html"
+            hx-trigger="load, sse:scan-complete"
+            hx-swap="innerHTML"
+            class="mt-3"
+          >
+            <div class="flex justify-center py-6">
+              <span class="loading loading-spinner loading-md text-primary"></span>
+            </div>
+          </div>
+        </details>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ── Footer ───────────────────────────────────────────────────────────── -->
+  <footer class="footer footer-center py-4 bg-base-100 text-base-content/40 text-xs">
+    <p>Meh-Scanner • <a href="./public/latest.json" class="link link-hover">latest.json</a></p>
+  </footer>
+
+  <!-- ── Client-side logic ────────────────────────────────────────────────── -->
+  <script>
+    /**
+     * All SSE-driven UI updates go through ONE channel:
+     * htmx:sseMessage fires on the element with hx-trigger="sse:..." when that
+     * event arrives, then bubbles up to <body>.  evt.detail is the raw
+     * MessageEvent so: evt.detail.type = event name, evt.detail.data = payload.
+     *
+     * IMPORTANT: scan-complete has THREE elements listening for it
+     * (#metrics, #deals-container, #status-badge) so the body handler fires
+     * three times per scan-complete.  We use _sseCompleteHandled to ensure the
+     * toast and header update run only once.
+     *
+     * HTMX handles:
+     *   • status badge  — hx-trigger="sse:scan-started, sse:scan-complete"
+     *   • metrics cards — hx-trigger="sse:scan-complete"
+     *   • deals table   — hx-trigger="sse:scan-complete"  (with hx-include)
+     * JS handles (things HTMX can't do natively):
+     *   • scan banner visibility
+     *   • scan button disabled state
+     *   • toast notification (deduplicated)
+     *   • "Last scan:" header text
+     */
+    let _sseCompleteHandled = false;
+
+    document.body.addEventListener('htmx:sseMessage', function (evt) {
+      const type = evt.detail.type;
+      if (!type) return;
+
+      let data = {};
+      try { data = JSON.parse(evt.detail.data); } catch (_) {}
+
+      if (type === 'scan-started') {
+        _sseCompleteHandled = false;      // reset for this new scan cycle
+        setScanBanner(true);
+        setScanButton(true);
+        toast('Scan started — checking deal sites ⏳', 'info');
+      }
+
+      if (type === 'scan-complete') {
+        // Banner and button are idempotent — safe to call on every bubble.
+        setScanBanner(false);
+        setScanButton(false);
+        // Toast + header update must fire exactly once despite three bubbles.
+        if (!_sseCompleteHandled) {
+          _sseCompleteHandled = true;
+          if (data.error) {
+            toast('Scan failed: ' + data.error, 'error', 7000);
+          } else {
+            const n = data.deals_count ?? 0;
+            toast(`Scan complete — ${n} deal${n !== 1 ? 's' : ''} found ✓`, 'success');
+          }
+          if (data.last_scan_time) {
+            document.getElementById('last-updated').textContent =
+              'Last scan: ' + data.last_scan_time;
+          }
+        }
+      }
+
+      if (type === 'status-update') {
+        // Fires immediately on (re)connect to sync UI with server state.
+        // If a scan is already running (e.g. page reload mid-scan), show banner.
+        if (data.scan_in_progress) {
+          setScanBanner(true);
+          setScanButton(true);
+        }
+        if (data.last_scan_time) {
+          document.getElementById('last-updated').textContent =
+            'Last scan: ' + data.last_scan_time;
+        }
+      }
+    });
+
+    /* ── Scan banner ─────────────────────────────────────────────────────── */
+    function setScanBanner(show) {
+      document.getElementById('scan-banner').classList.toggle('hidden', !show);
+    }
+
+    /* ── Scan button ─────────────────────────────────────────────────────── */
+    function setScanButton(disabled) {
+      document.getElementById('scan-btn').disabled = disabled;
+    }
+
+    /* ── Scan button HTMX hooks ──────────────────────────────────────────── */
+    function onScanStart() {
+      setScanButton(true);
+      document.getElementById('scan-error').classList.add('hidden');
+    }
+
+    function onScanResponse(evt) {
+      const status = evt.detail.xhr.status;
+      const errEl  = document.getElementById('scan-error');
+
+      if (status < 300) {
+        // Button stays disabled — SSE scan-started will confirm and re-render badge.
+        // scan-complete will re-enable it.
+        return;
+      }
+      // On error, re-enable immediately so the user can retry.
+      setScanButton(false);
+      if (status === 409) {
+        errEl.textContent = 'A scan is already in progress.';
+      } else {
+        errEl.textContent = 'Failed to start scan — check the logs.';
+        toast('Could not start scan ❌', 'error');
+      }
+      errEl.classList.remove('hidden');
+    }
+
+    /* ── Toast notifications ─────────────────────────────────────────────── */
+    function toast(msg, type = 'info', durationMs = 4500) {
+      const map = {
+        success: 'alert-success',
+        error:   'alert-error',
+        info:    'alert-info',
+        warning: 'alert-warning',
+      };
+      const el = document.createElement('div');
+      el.className = `alert ${map[type] ?? 'alert-info'} toast-item shadow-lg text-sm pointer-events-auto`;
+      el.textContent = msg;
+      document.getElementById('toasts').appendChild(el);
+      setTimeout(() => el.remove(), durationMs);
+    }
+
+    /* ── SSE connection state logging (optional, useful for debugging) ───── */
+    document.body.addEventListener('htmx:sseOpen', function () {
+      console.debug('[SSE] connection opened');
+    });
+    document.body.addEventListener('htmx:sseError', function (evt) {
+      console.warn('[SSE] connection error', evt.detail);
+    });
+    document.body.addEventListener('htmx:sseClose', function () {
+      console.debug('[SSE] connection closed — browser will reconnect');
+    });
+  </script>
+
+</body>
+</html>

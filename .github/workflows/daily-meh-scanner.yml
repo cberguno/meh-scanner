@@ -1,0 +1,276 @@
+name: Daily Meh-Scanner
+
+on:
+  schedule:
+    # Run daily at 9:00 AM UTC
+    - cron: '0 9 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      # Project Pages live at https://user.github.io/<repo>/ — path-only <base> fixes relative links
+      MEH_DASHBOARD_BASE_PATH: /${{ github.event.repository.name }}/
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Cache uv packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Create virtual environment and install dependencies
+        run: |
+          uv venv
+          uv pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: |
+          uv run playwright install --with-deps chromium
+
+      - name: Setup Google Sheets credentials
+        run: |
+          echo '${{ secrets.GOOGLE_TOKEN_JSON }}' > token.json
+
+      - name: Run Meh-Scanner
+        id: scanner
+        continue-on-error: true
+        run: |
+          uv run python main.py
+        timeout-minutes: 20
+
+      - name: Check dashboard output
+        id: dashboard
+        if: steps.scanner.outcome == 'success'
+        run: |
+          echo "=== Checking public/ directory ==="
+          ls -la public/ || true
+          echo ""
+
+          # Check required files
+          html_ok=false
+          json_ok=false
+          nojekyll_ok=false
+
+          if [ -f public/index.html ]; then
+            html_ok=true
+            html_bytes=$(wc -c < public/index.html | tr -d ' ')
+            echo "✓ index.html exists ($html_bytes bytes)"
+          else
+            echo "✗ index.html NOT FOUND"
+            html_bytes=0
+          fi
+
+          if [ -f public/latest.json ]; then
+            json_ok=true
+            json_bytes=$(wc -c < public/latest.json | tr -d ' ')
+            echo "✓ latest.json exists ($json_bytes bytes)"
+          else
+            echo "✗ latest.json NOT FOUND"
+          fi
+
+          if [ -f public/.nojekyll ]; then
+            nojekyll_ok=true
+            echo "✓ .nojekyll exists (disables Jekyll)"
+          else
+            echo "✗ .nojekyll NOT FOUND - Jekyll may interfere!"
+          fi
+
+          echo ""
+
+          # Output for workflow
+          if [ "$html_ok" = true ] && [ "$json_ok" = true ] && [ "$nojekyll_ok" = true ]; then
+            echo "ready_to_deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready_to_deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "html_present=$html_ok" >> "$GITHUB_OUTPUT"
+          echo "json_present=$json_ok" >> "$GITHUB_OUTPUT"
+          echo "nojekyll_present=$nojekyll_ok" >> "$GITHUB_OUTPUT"
+          echo "bytes=$html_bytes" >> "$GITHUB_OUTPUT"
+
+      - name: Verify HTML base tag
+        if: steps.dashboard.outputs.html_present == 'true'
+        run: |
+          echo "=== Checking HTML <base> tag injection ==="
+          head -n 10 public/index.html | grep -i "base href" || echo "⚠️ No <base> tag found (OK for local, needed for GitHub Pages project sites)"
+
+      - name: Pre-deploy verification
+        if: steps.dashboard.outputs.ready_to_deploy == 'true'
+        run: |
+          echo "=== Pre-deployment artifact check ==="
+          echo ""
+          echo "Files to be deployed from ./public:"
+          ls -lh public/
+          echo ""
+          echo "Verifying structure:"
+          file public/index.html 2>/dev/null || echo "  ⚠️ index.html type check failed"
+          [ -f public/.nojekyll ] && echo "  ✅ .nojekyll at root" || echo "  ❌ .nojekyll missing!"
+          [ -f public/latest.json ] && echo "  ✅ latest.json present" || echo "  ❌ latest.json missing!"
+          echo ""
+          echo "Ready for deployment to gh-pages."
+
+      # Deploy only from the repo default branch (main, master, etc.) and all files present
+      - name: Deploy dashboard to GitHub Pages
+        id: deploy
+        if: steps.scanner.outcome == 'success' && steps.dashboard.outputs.ready_to_deploy == 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./public
+          force_orphan: true
+          cname: ''  # Explicitly disable CNAME to avoid conflicts
+          # First run creates gh-pages; orphan history keeps the branch small
+
+      - name: Post-deploy verification
+        if: steps.deploy.outcome == 'success'
+        continue-on-error: true
+        run: |
+          echo "=== Post-deployment verification ==="
+          echo "Waiting for gh-pages branch to be available..."
+          sleep 3
+
+          echo ""
+          echo "GitHub Pages URL:"
+          echo "  https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
+          echo ""
+          echo "Expected files on gh-pages branch:"
+          echo "  - index.html (interactive dashboard)"
+          echo "  - latest.json (JSON API)"
+          echo "  - .nojekyll (Jekyll disable — CRITICAL)"
+          echo ""
+          echo "To verify deployment:"
+          echo "  1. Check gh-pages branch on GitHub:"
+          echo "     https://github.com/${{ github.repository }}/tree/gh-pages"
+          echo "  2. Ensure .nojekyll is at root (not nested)"
+
+      - name: First-time setup reminder
+        if: steps.deploy.outcome == 'success'
+        run: |
+          echo "=== ⚠️  ONE-TIME GITHUB PAGES CONFIGURATION ==="
+          echo ""
+          echo "If this is your FIRST deploy:"
+          echo ""
+          echo "1. Go to Repository Settings:"
+          echo "   https://github.com/${{ github.repository }}/settings/pages"
+          echo ""
+          echo "2. Under 'Build and deployment':"
+          echo "   - Source: Deploy from a branch"
+          echo "   - Branch: gh-pages"
+          echo "   - Folder: / (root)"
+          echo "   - Click Save"
+          echo ""
+          echo "3. Wait 1–2 minutes and visit:"
+          echo "   https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
+          echo ""
+          echo "4. If you see a 404 or blank page:"
+          echo "   - Hard-refresh: Ctrl+Shift+R (Windows/Linux) or Cmd+Shift+R (Mac)"
+          echo "   - Open DevTools (F12) → Console for 404 errors"
+          echo "   - Check that Settings → Pages shows 'Your site is live at...'"
+
+      - name: Upload logs as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ github.run_number }}
+          path: logs/
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Meh-Scanner Run Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Run ID:** ${{ github.run_number }} | **Triggered by:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### Status" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Scanner | ${{ steps.scanner.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dashboard | ${{ steps.dashboard.outputs.ready_to_deploy }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deployment | ${{ steps.deploy.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### Dashboard Files" >> $GITHUB_STEP_SUMMARY
+          echo "| File | ✓ | Size | Notes |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|---|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| index.html | ${{ steps.dashboard.outputs.html_present }} | ${{ steps.dashboard.outputs.bytes }} bytes | Interactive dashboard |" >> $GITHUB_STEP_SUMMARY
+          echo "| latest.json | ${{ steps.dashboard.outputs.json_present }} | — | JSON API |" >> $GITHUB_STEP_SUMMARY
+          echo "| .nojekyll | ${{ steps.dashboard.outputs.nojekyll_present }} | 0 bytes | **CRITICAL:** Disables Jekyll |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### 🌐 GitHub Pages" >> $GITHUB_STEP_SUMMARY
+          SITE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
+          echo "- **Live URL:** [$SITE_URL]($SITE_URL)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch:** gh-pages at [/tree/gh-pages](https://github.com/${{ github.repository }}/tree/gh-pages)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Settings:** [Pages configuration](https://github.com/${{ github.repository }}/settings/pages)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.deploy.outcome }}" = "success" ]; then
+            SITE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
+            echo "### ✅ Deployment Successful" >> $GITHUB_STEP_SUMMARY
+            echo "Files have been pushed to the gh-pages branch." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**[🚀 Visit Live Site →]($SITE_URL)** (may take 1-2 min on first deploy)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**If you see a 404 or blank page:**" >> $GITHUB_STEP_SUMMARY
+            echo "1. Hard-refresh: **Ctrl+Shift+R** (Win/Linux) or **Cmd+Shift+R** (Mac)" >> $GITHUB_STEP_SUMMARY
+            echo "2. Wait 1-2 minutes on first deploy" >> $GITHUB_STEP_SUMMARY
+            echo "3. Check browser DevTools (F12) → Network tab for 404s" >> $GITHUB_STEP_SUMMARY
+            echo "4. Verify Pages Settings: [settings/pages](https://github.com/${{ github.repository }}/settings/pages)" >> $GITHUB_STEP_SUMMARY
+            echo "   - Source should be: 'Deploy from a branch' → 'gh-pages' → '/(root)'" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ⚠️ Deployment Issue" >> $GITHUB_STEP_SUMMARY
+            echo "Check the logs above, especially:" >> $GITHUB_STEP_SUMMARY
+            echo "- 'Check dashboard output' — are all files present?" >> $GITHUB_STEP_SUMMARY
+            echo "- 'Run Meh-Scanner' — did the scan succeed?" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          LOG_FILE="logs/meh-scanner-$(date +%Y-%m-%d).log"
+          if [ -f "$LOG_FILE" ]; then
+            echo "### 📋 Run Log (last 15 entries)" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
+            tail -n 15 "$LOG_FILE" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Fail on critical errors
+        if: steps.scanner.outcome == 'failure'
+        run: |
+          echo "❌ Scanner failed critically. Check logs for details."
+          exit 1
