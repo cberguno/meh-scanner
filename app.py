@@ -615,6 +615,29 @@ async def track_cta(request: Request):
     return {"ok": True}
 
 
+@app.get("/debug/candidates")
+async def debug_candidates():
+    """Return last scan candidates as JSON — real data, no filtering."""
+    candidates = state.get_last_candidates()
+    return {
+        "count": len(candidates),
+        "candidates": [
+            {
+                "site_name":        c.get("site_name", ""),
+                "url":              c.get("url", ""),
+                "deal_title":       c.get("deal_title", ""),
+                "deal_price":       c.get("deal_price", ""),
+                "original_price":   c.get("original_price", ""),
+                "quality_score":    c.get("quality_score"),
+                "accepted":         c.get("accepted", False),
+                "rejection_reason": c.get("rejection_reason", ""),
+                "niche":            c.get("niche", ""),
+            }
+            for c in candidates
+        ],
+    }
+
+
 @app.get("/candidates.csv")
 async def candidates_csv():
     """Download last scan candidates as a CSV file."""
