@@ -73,6 +73,7 @@ class DashboardState:
         self.scan_in_progress:    bool            = False
         self.last_scan_time:      Optional[str]   = None
         self.last_error:          Optional[str]   = None
+        self.last_scan_summary:   dict            = {}
 
     # ── reads ─────────────────────────────────────────────────────────────────
 
@@ -85,10 +86,11 @@ class DashboardState:
         """Consistent point-in-time snapshot of all scalar state fields."""
         with self._lock:
             return {
-                "scan_in_progress": self.scan_in_progress,
-                "deals_count":      len(self.deals),
-                "last_scan_time":   self.last_scan_time,
-                "last_error":       self.last_error,
+                "scan_in_progress":  self.scan_in_progress,
+                "deals_count":       len(self.deals),
+                "last_scan_time":    self.last_scan_time,
+                "last_error":        self.last_error,
+                "last_scan_summary": dict(self.last_scan_summary),
             }
 
     def get_metrics(self) -> dict:
@@ -118,6 +120,10 @@ class DashboardState:
         with self._lock:
             self.scan_in_progress = False
             self.last_error       = error
+
+    def set_scan_summary(self, summary: dict) -> None:
+        with self._lock:
+            self.last_scan_summary = dict(summary)
 
     def load_deals_from_file(self) -> None:
         """
@@ -214,6 +220,8 @@ async def _run_scan_background(force_domains: frozenset = frozenset()) -> None:
                 archive_deals(scan_id, deals)
 
             state.set_scan_finished(error=None)
+            if result.get("summary"):
+                state.set_scan_summary(result["summary"])
             _success     = True
             _deals_count = result["deals_count"]
 
@@ -447,7 +455,8 @@ async def deals_partial(
     return templates.TemplateResponse(
         request=request,
         name="deals_table.html",
-        context={"deals": filtered, "total": len(all_deals), "filtered": len(filtered)},
+        context={"deals": filtered, "total": len(all_deals), "filtered": len(filtered),
+                 "last_scan": state.get_snapshot()["last_scan_time"]},
     )
 
 

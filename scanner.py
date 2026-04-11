@@ -170,6 +170,17 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
         "candidates":  len(sites),
         "runtime":     round(runtime, 1),
         "error":       None,
+        "summary": {
+            "discovered":  _discovered,
+            "enriched":    _enriched,
+            "analyzed":    _analyzed,
+            "parse_fail":  _parse_fail,
+            "scored":      _scored,
+            "filtered":    _filtered,
+            "deals":       len(deals),
+            "sheets":      _sheets_status,
+            "missing_keys": _missing,
+        },
     }
 
 

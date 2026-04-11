@@ -193,6 +193,36 @@
       </div>
     </section>
 
+    <!-- ── Last scan summary ─────────────────────────────────────────────── -->
+    {% if snapshot.last_scan_summary %}
+    {% set s = snapshot.last_scan_summary %}
+    <section class="card bg-base-100 shadow">
+      <div class="card-body py-3">
+        <h2 class="card-title text-sm mb-1">Last Scan Pipeline</h2>
+        <div class="flex flex-wrap gap-x-5 gap-y-1 text-xs font-mono">
+          <span>discovered <strong>{{ s.discovered }}</strong></span>
+          <span>enriched <strong>{{ s.enriched }}</strong></span>
+          <span>analyzed <strong>{{ s.analyzed }}</strong></span>
+          <span>parse_fail <strong class="{{ 'text-warning' if s.parse_fail > 0 else '' }}">{{ s.parse_fail }}</strong></span>
+          <span>scored <strong>{{ s.scored }}</strong></span>
+          <span>filtered <strong>{{ s.filtered }}</strong></span>
+          <span>deals <strong class="{{ 'text-success' if s.deals > 0 else 'text-warning' }}">{{ s.deals }}</strong></span>
+          <span>sheets <strong>{{ s.sheets }}</strong></span>
+          {% if s.missing_keys %}
+          <span class="text-error">missing: {{ s.missing_keys | join(", ") }}</span>
+          {% endif %}
+        </div>
+        {% if s.discovered == 0 %}
+        <p class="text-xs text-warning mt-1">↑ discovered=0 — seen_sites.db is blocking all candidates. Redeploy to clear.</p>
+        {% elif s.parse_fail > 0 and s.scored == 0 %}
+        <p class="text-xs text-warning mt-1">↑ parse_fail={{ s.parse_fail }}, scored=0 — Anthropic is returning non-JSON. Check ANTHROPIC_API_KEY.</p>
+        {% elif s.scored > 0 and s.filtered == 0 %}
+        <p class="text-xs text-warning mt-1">↑ scored={{ s.scored }} but filtered=0 — all sites scored below 6. Rubric may be too strict.</p>
+        {% endif %}
+      </div>
+    </section>
+    {% endif %}
+
     <!-- ── Filter form ───────────────────────────────────────────────────── -->
     <!--
       The form is a separate section from the deals table.
@@ -323,29 +353,19 @@
     </section>
 
     <!-- ── Source quality ──────────────────────────────────────────────────── -->
-    <!--
-      Collapsible: closed by default so it doesn't crowd the main deal view.
-      hx-trigger="load, sse:scan-complete" keeps it in sync with scan results.
-    -->
     <section class="card bg-base-100 shadow">
       <div class="card-body py-3">
-        <details>
-          <summary class="card-title text-base cursor-pointer select-none list-none flex items-center gap-2">
-            <span>Source Quality</span>
-            <span class="text-xs font-normal text-base-content/40">(click to expand)</span>
-          </summary>
-          <div
-            id="sources-container"
-            hx-get="/api/sources_html"
-            hx-trigger="load, sse:scan-complete"
-            hx-swap="innerHTML"
-            class="mt-3"
-          >
-            <div class="flex justify-center py-6">
-              <span class="loading loading-spinner loading-md text-primary"></span>
-            </div>
+        <h2 class="card-title text-base mb-2">Source Quality</h2>
+        <div
+          id="sources-container"
+          hx-get="/api/sources_html"
+          hx-trigger="load, sse:scan-complete"
+          hx-swap="innerHTML"
+        >
+          <div class="flex justify-center py-6">
+            <span class="loading loading-spinner loading-md text-primary"></span>
           </div>
-        </details>
+        </div>
       </div>
     </section>
 
