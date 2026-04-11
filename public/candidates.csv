@@ -1,0 +1,2 @@
+site_name,url,snippet,vibe_score,deal_title,deal_price,original_price,meh_signals,meh_signal_hits,scrape_method,quality_score,niche,rationale,accepted,rejection_reason
+T,https://example.com,,5,,,,,0,playwright,5,,test,no,score 5 < 6

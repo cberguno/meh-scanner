@@ -207,17 +207,36 @@
           <span>scored <strong>{{ s.scored }}</strong></span>
           <span>filtered <strong>{{ s.filtered }}</strong></span>
           <span>deals <strong class="{{ 'text-success' if s.deals > 0 else 'text-warning' }}">{{ s.deals }}</strong></span>
+          <span>live <strong>{{ s.search_live }}</strong></span>
+          <span>seed <strong>{{ s.search_seed }}</strong></span>
+          <span>queries <strong>{{ s.search_queries_succeeded }}/{{ s.search_queries_total }}</strong></span>
+          <span>seen <strong>{{ s.seen_marked }}</strong></span>
           <span>sheets <strong>{{ s.sheets }}</strong></span>
           {% if s.missing_keys %}
           <span class="text-error">missing: {{ s.missing_keys | join(", ") }}</span>
           {% endif %}
         </div>
-        {% if s.discovered == 0 %}
+        {% if false %}
         <p class="text-xs text-warning mt-1">↑ discovered=0 — seen_sites.db is blocking all candidates. Redeploy to clear.</p>
         {% elif s.parse_fail > 0 and s.scored == 0 %}
         <p class="text-xs text-warning mt-1">↑ parse_fail={{ s.parse_fail }}, scored=0 — Anthropic is returning non-JSON. Check ANTHROPIC_API_KEY.</p>
         {% elif s.scored > 0 and s.filtered == 0 %}
         <p class="text-xs text-warning mt-1">↑ scored={{ s.scored }} but filtered=0 — all sites scored below 6. Rubric may be too strict.</p>
+        {% endif %}
+        {% if s.search_degraded %}
+        <p class="text-xs text-warning mt-1">Live search degraded - Serper failed and the current candidate list is coming only from curated seeds.</p>
+        {% endif %}
+        {% if s.search_low_yield and not s.search_degraded %}
+        <p class="text-xs text-warning mt-1">Live search succeeded but found no non-seed discoveries. Review the drop summary and rejection samples in logs.</p>
+        {% endif %}
+        {% if s.discovered == 0 and not s.search_degraded %}
+        <p class="text-xs text-warning mt-1">No candidates made it through search. Check query coverage, filters, and drop reasons.</p>
+        {% endif %}
+        {% if s.search_relaxed_threshold %}
+        <p class="text-xs text-base-content/50 mt-1">Adaptive fallback promoted borderline vibe hits this run to improve recall.</p>
+        {% endif %}
+        {% if s.search_drop_summary %}
+        <p class="text-xs text-base-content/50 mt-1">drops: {{ s.search_drop_summary }}</p>
         {% endif %}
       </div>
     </section>
@@ -234,6 +253,7 @@
         </div>
         <div
           id="candidates-container"
+          class="max-h-[28rem] overflow-y-auto overflow-x-auto rounded-md border border-base-300/40"
           hx-get="/api/candidates_html"
           hx-trigger="load, sse:scan-complete"
           hx-swap="innerHTML"

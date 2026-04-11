@@ -1,12 +1,12 @@
-import json
 import os
 import time
 
 from analyzer import analyze_sites_batch
 from config import Config
-from dashboard_export import export_daily_dashboard
+from dashboard_export import export_daily_dashboard, write_project_root_candidate_files
 from logger import logger, log_run_summary
-from scraper import search_for_deal_sites, enrich_candidates
+from scoring import build_candidate_records
+from scraper import enrich_candidates, mark_candidates_seen, search_for_deal_sites
 
 def main():
     start_time = time.time()
@@ -34,38 +34,27 @@ def main():
     logger.info("search_phase", message="Starting analysis of deal sites...")
     try:
         analyses = analyze_sites_batch(sites)
+        mark_candidates_seen([item["site"] for item in analyses])
     except Exception as e:
         logger.error("analysis_failed", error=str(e), message=f"Analysis failed: {str(e)}")
         # Continue with partial results if available
         analyses = []
 
-    # Filter and format results with error handling
+    # Filter and format results (same rules as scanner: quality_score >= 6)
+    all_candidates = build_candidate_records(analyses)
     deals = []
-    for item in analyses:
-        site = item['site']
-        analysis = item['analysis']
-        try:
-            parsed = json.loads(analysis)
-            if parsed.get('quality_score', 0) >= 6:  # Only good deals
-                deals.append({
-                    'site_name': site['title'],
-                    'url': site['link'],
-                    'rationale': parsed.get('rationale', analysis),
-                    'niche': parsed.get('niche', ''),
-                    'quality_score': parsed['quality_score'],
-                    'deal_price': site.get('deal_price', ''),
-                    'original_price': site.get('original_price', ''),
-                })
-        except Exception:
-            deals.append({
-                'site_name': site['title'],
-                'url': site['link'],
-                'rationale': analysis,
-                'niche': 'Unknown',
-                'quality_score': 5,
-                'deal_price': site.get('deal_price', ''),
-                'original_price': site.get('original_price', ''),
-            })
+    for c in all_candidates:
+        if not c.get("accepted"):
+            continue
+        deals.append({
+            "site_name": c["site_name"],
+            "url": c["url"],
+            "rationale": c.get("rationale", ""),
+            "niche": c.get("niche", ""),
+            "quality_score": c["quality_score"],
+            "deal_price": c.get("deal_price", ""),
+            "original_price": c.get("original_price", ""),
+        })
 
     if deals:
         logger.info("deals_found", count=len(deals), message=f"Found {len(deals)} potential deals")
@@ -86,6 +75,7 @@ def main():
             deals,
             candidates_count=len(sites) if sites else 0,
             runtime_seconds=runtime,
+            all_candidates=all_candidates,
         )
         if Config.MEH_DASHBOARD and not Config.MEH_DASHBOARD_DRY_RUN:
             gh = os.getenv("GITHUB_REPOSITORY", "").strip()
@@ -104,6 +94,11 @@ def main():
                 )
     except Exception as e:
         logger.error("dashboard_export_failed", error=str(e), message=str(e))
+
+    try:
+        write_project_root_candidate_files(all_candidates)
+    except Exception as e:
+        logger.error("candidates_file_write_failed", error=str(e), message=str(e))
 
     log_run_summary(len(sites) if sites else 0, len(deals), 0, runtime)
     logger.info("run_completed", message="Scan complete!")

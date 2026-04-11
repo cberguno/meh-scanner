@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+
+{% block content %}
+  <div class="card">
+    <h2>Welcome</h2>
+    <p>Use the travel search tool to explore flights first, then hotels. The first implementation uses a mock provider so the tool works without external API keys.</p>
+    <ul>
+      <li><a href="/flights">Search flights</a></li>
+      <li><a href="/hotels">Search hotels</a></li>
+      <li><a href="/api/flights?origin=SFO&destination=LAX&departure_date=2026-05-01">Flight search API example</a></li>
+      <li><a href="/api/hotels?destination=Paris&checkin_date=2026-05-01&checkout_date=2026-05-05">Hotel search API example</a></li>
+    </ul>
+  </div>
+{% endblock %}

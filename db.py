@@ -6,6 +6,7 @@ All writes are serialised with a module-level threading.Lock.
 import json as _json
 import sqlite3
 import threading
+import re
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -76,9 +77,55 @@ def init_db() -> None:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_source_last ON source_stats(last_seen DESC);
+                
+                CREATE TABLE IF NOT EXISTS seen_sites (
+                    url TEXT PRIMARY KEY,
+                    first_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_seen_sites_last ON seen_sites(last_seen DESC);
             """)
             con.commit()
             logger.info("db_ready", "Database initialised", path=str(DB_PATH))
+            # Cleanup seen_sites entries older than 1 day so daily scans can revisit candidates.
+            try:
+                cur = con.execute("DELETE FROM seen_sites WHERE last_seen < datetime('now','-1 day')")
+                deleted = cur.rowcount
+                if deleted and deleted > 0:
+                    logger.info("db_cleanup", deleted=deleted, message=f"Cleaned up {deleted} old entries from seen_sites")
+                con.commit()
+            except Exception:
+                # Non-fatal cleanup failure
+                pass
+            # Migrate any existing seen_sites rows into source_stats to consolidate tracking.
+            try:
+                rows = con.execute("SELECT url, first_seen, last_seen FROM seen_sites").fetchall()
+                for r in rows:
+                    url = r["url"]
+                    domain = _extract_domain(url)
+                    if not domain:
+                        continue
+                    # Insert a minimal source_stats row if domain not already tracked.
+                    con.execute(
+                        """INSERT OR IGNORE INTO source_stats
+                           (domain, first_seen, last_seen, scans_seen, deals_found, score_sum, recent_outcomes, status)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            domain,
+                            r.get("first_seen") or None,
+                            r.get("last_seen") or None,
+                            1,
+                            0,
+                            0.0,
+                            "[]",
+                            "new",
+                        ),
+                    )
+                con.commit()
+            except Exception:
+                # Non-fatal migration failure; keep running
+                pass
         finally:
             con.close()
 
@@ -342,5 +389,48 @@ def get_source_stats(limit: int = 100) -> list[dict]:
                     "retention_score":   retention,
                 })
             return result
+        finally:
+            con.close()
+
+
+# ── seen_sites helpers ─────────────────────────────────────────────────────
+def _normalize_url_for_seen(url: str) -> str:
+    if not url:
+        return ""
+    u = url.lower().strip()
+    u = re.sub(r'[\?#].*$', '', u)
+    u = re.sub(r'/+$', '', u)
+    return u
+
+
+def is_site_seen(url: str) -> bool:
+    """Return True if the normalized URL already exists in seen_sites."""
+    norm = _normalize_url_for_seen(url)
+    if not norm:
+        return False
+    with _LOCK:
+        con = _conn()
+        try:
+            row = con.execute("SELECT 1 FROM seen_sites WHERE url = ?", (norm,)).fetchone()
+            return row is not None
+        finally:
+            con.close()
+
+
+def mark_site_seen(url: str) -> None:
+    """Insert or update a seen_sites row for the normalized URL."""
+    norm = _normalize_url_for_seen(url)
+    if not norm:
+        return
+    with _LOCK:
+        con = _conn()
+        try:
+            con.execute(
+                """INSERT INTO seen_sites (url, first_seen, last_seen)
+                   VALUES (?, COALESCE((SELECT first_seen FROM seen_sites WHERE url = ?), CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+                   ON CONFLICT(url) DO UPDATE SET last_seen = CURRENT_TIMESTAMP""",
+                (norm, norm),
+            )
+            con.commit()
         finally:
             con.close()
