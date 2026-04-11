@@ -226,7 +226,12 @@
     <!-- ── Last scan candidates ─────────────────────────────────────────── -->
     <section class="card bg-base-100 shadow">
       <div class="card-body py-3">
-        <h2 class="card-title text-base mb-2">Last Scan — All Candidates</h2>
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="card-title text-base">Last Scan — All Candidates</h2>
+          <a href="/candidates.csv" download class="btn btn-xs btn-outline gap-1">
+            ⬇ Download CSV
+          </a>
+        </div>
         <div
           id="candidates-container"
           hx-get="/api/candidates_html"

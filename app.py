@@ -30,7 +30,7 @@ from typing import AsyncGenerator, Optional
 
 import html as html_mod
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
 
@@ -613,6 +613,19 @@ async def track_cta(request: Request):
     """Landing page CTA click tracker. Called via navigator.sendBeacon()."""
     logger.info("cta_click", "Landing page CTA clicked — Get Early Access")
     return {"ok": True}
+
+
+@app.get("/candidates.csv")
+async def candidates_csv():
+    """Download last scan candidates as a CSV file."""
+    path = Path("public") / "candidates.csv"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="No scan has run yet — trigger a scan first.")
+    return FileResponse(
+        path=str(path),
+        media_type="text/csv",
+        filename="meh-scanner-candidates.csv",
+    )
 
 
 @app.get("/health")

@@ -13,7 +13,9 @@ path-only ``<base href="/repo-name/">`` makes ./latest.json resolve under that p
 """
 from __future__ import annotations
 
+import csv
 import html as html_module
+import io
 import json
 import os
 from datetime import datetime, timezone
@@ -26,7 +28,13 @@ PUBLIC_DIR       = Path("public")
 INDEX_HTML       = PUBLIC_DIR / "index.html"
 LATEST_JSON      = PUBLIC_DIR / "latest.json"
 CANDIDATES_JSON  = PUBLIC_DIR / "candidates.json"
+CANDIDATES_CSV   = PUBLIC_DIR / "candidates.csv"
 NOJEKYLL         = PUBLIC_DIR / ".nojekyll"
+
+CSV_COLUMNS = [
+    "site_name", "url", "deal_title", "deal_price", "original_price",
+    "quality_score", "accepted", "rejection_reason", "niche",
+]
 
 
 def _normalize_base_path(path: str) -> str:
@@ -131,6 +139,13 @@ def export_daily_dashboard(
             }, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=CSV_COLUMNS, extrasaction="ignore",
+                                lineterminator="\n")
+        writer.writeheader()
+        for c in all_candidates:
+            writer.writerow({**c, "accepted": "yes" if c.get("accepted") else "no"})
+        CANDIDATES_CSV.write_text(buf.getvalue(), encoding="utf-8")
 
     rows_html = []
     for d in deals:
