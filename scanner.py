@@ -42,6 +42,15 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
         logger.error("config_error", msg)
         return _fail(msg, start)
 
+    # ── counters for scan_summary ────────────────────────────────────────────
+    _discovered = 0
+    _enriched   = 0
+    _analyzed   = 0
+    _parse_fail = 0
+    _scored     = 0
+    _filtered   = 0
+    _sheets_status = "skip"
+
     # ── Phase 1: search & enrich ────────────────────────────────────────────
     try:
         logger.info("search_phase", "Searching for deal sites…")
@@ -50,8 +59,10 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
             logger.warning("no_sites_found", "No sites returned by search")
             return _ok([], 0, start)
 
+        _discovered = len(sites)
         logger.info("sites_found", f"Found {len(sites)} candidates", count=len(sites))
         sites = enrich_candidates(sites)
+        _enriched = len(sites)
         logger.info("debug_enriched", f"DEBUG enriched: {len(sites)} sites going to analysis", count=len(sites))
     except Exception as exc:
         return _fail(f"Search/enrich failed: {exc}", start)
@@ -60,6 +71,7 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
     try:
         logger.info("analysis_phase", f"Analyzing {len(sites)} sites…")
         analyses = analyze_sites_batch(sites)
+        _analyzed = len(analyses)
         logger.info("debug_analyses", f"DEBUG analysis done: {len(analyses)} results", count=len(analyses))
         for i, _item in enumerate(analyses[:3]):
             logger.info("debug_sample", f"DEBUG sample {i+1}: site={_item['site'].get('title','?')!r} raw={_item['analysis'][:300]!r}", index=i+1, site=_item['site'].get('title',''), raw=_item['analysis'][:300])
@@ -74,8 +86,10 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
         try:
             parsed = json.loads(raw)
             score = parsed.get("quality_score", 0)
+            _scored += 1
             logger.info("debug_score", f"DEBUG score: {site.get('title','?')!r} → {score}", title=site.get('title',''), score=score)
             if score >= 6:
+                _filtered += 1
                 deals.append(apply_affiliate_url(_compute_roi({
                     "site_name":      site.get("title", ""),
                     "url":            site.get("link", ""),
@@ -86,6 +100,7 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
                     "original_price": site.get("original_price", ""),
                 })))
         except Exception as exc:
+            _parse_fail += 1
             logger.warning(
                 "analysis_parse_failed",
                 f"Could not parse analysis for {site.get('title')}: {exc}",
@@ -112,8 +127,9 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
 
     # ── Phase 3d: write to Google Sheet ─────────────────────────────────────
     try:
-        append_deals(deals)
+        _sheets_status = "ok" if append_deals(deals) else "skip"
     except Exception as exc:
+        _sheets_status = "fail"
         logger.error("sheets_unexpected", f"Unexpected error writing to sheet: {exc}", error=str(exc))
 
     # ── Phase 4: export dashboard ────────────────────────────────────────────
@@ -122,6 +138,22 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
         export_daily_dashboard(deals, candidates_count=len(sites), runtime_seconds=runtime)
     except Exception as exc:
         logger.error("dashboard_export_failed", f"Export failed (continuing): {exc}", error=str(exc))
+
+    _missing = [k for k, v in [
+        ("SERPER_API_KEY",    Config.SERPER_API_KEY),
+        ("ANTHROPIC_API_KEY", Config.ANTHROPIC_API_KEY),
+        ("GOOGLE_SHEET_ID",   Config.GOOGLE_SHEET_ID),
+        ("GOOGLE_SERVICE_ACCOUNT_JSON", Config.GOOGLE_SERVICE_ACCOUNT_JSON),
+    ] if not v]
+    logger.info(
+        "scan_summary",
+        f"scan_summary discovered={_discovered} enriched={_enriched} analysis={_analyzed} "
+        f"parse_fail={_parse_fail} scored={_scored} filtered={_filtered} deals={len(deals)} "
+        f"sheets={_sheets_status} missing_keys={_missing}",
+        discovered=_discovered, enriched=_enriched, analysis=_analyzed,
+        parse_fail=_parse_fail, scored=_scored, filtered=_filtered,
+        deals=len(deals), sheets=_sheets_status, missing_keys=_missing,
+    )
 
     logger.info(
         "scan_complete",
