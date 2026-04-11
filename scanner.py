@@ -134,6 +134,38 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
 
     logger.info("debug_filtered", f"DEBUG filter result: {len(deals)} deals passed score >= 6", count=len(deals))
 
+    # ── Phase 3e: write candidates.csv and print to console ──────────────────
+    import csv as _csv
+    _csv_cols = ["site_name","url","deal_title","deal_price","original_price",
+                 "quality_score","accepted","rejection_reason","niche"]
+    try:
+        with open("candidates.csv", "w", newline="", encoding="utf-8") as _f:
+            _w = _csv.DictWriter(_f, fieldnames=_csv_cols, extrasaction="ignore")
+            _w.writeheader()
+            for _c in all_candidates:
+                _w.writerow({**_c, "accepted": "yes" if _c.get("accepted") else "no"})
+        print(f"\n=== SCAN CANDIDATES ({len(all_candidates)} total) ===")
+        if not all_candidates:
+            print("NO CANDIDATES FOUND")
+        else:
+            _header = f"{'score':>5}  {'accepted':>8}  {'price':>8}  {'site':<30}  {'title':<40}  reason"
+            print(_header)
+            print("-" * len(_header))
+            for _c in all_candidates[:10]:
+                print(
+                    f"{str(_c.get('quality_score') or '?'):>5}  "
+                    f"{'yes' if _c.get('accepted') else 'no':>8}  "
+                    f"{str(_c.get('deal_price') or ''):>8}  "
+                    f"{str(_c.get('site_name') or '')[:30]:<30}  "
+                    f"{str(_c.get('deal_title') or '')[:40]:<40}  "
+                    f"{_c.get('rejection_reason') or ''}"
+                )
+            if len(all_candidates) > 10:
+                print(f"  ... and {len(all_candidates) - 10} more rows in candidates.csv")
+        print("=" * 60)
+    except Exception as _exc:
+        print(f"[candidates dump failed: {_exc}]")
+
     # ── Phase 3b: fire alerts for high-quality deals ────────────────────────
     check_and_fire_alerts(deals)
 
