@@ -80,6 +80,7 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
 
     # ── Phase 3: filter & build deal list ───────────────────────────────────
     deals: list[dict] = []
+    all_candidates: list[dict] = []
     for item in analyses:
         site = item["site"]
         raw = item["analysis"]
@@ -87,8 +88,19 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
             parsed = json.loads(raw)
             score = parsed.get("quality_score", 0)
             _scored += 1
+            accepted = score >= 6
             logger.info("debug_score", f"DEBUG score: {site.get('title','?')!r} → {score}", title=site.get('title',''), score=score)
-            if score >= 6:
+            all_candidates.append({
+                "site_name":      site.get("title", ""),
+                "url":            site.get("link", ""),
+                "deal_title":     site.get("deal_title", ""),
+                "deal_price":     site.get("deal_price", ""),
+                "original_price": site.get("original_price", ""),
+                "quality_score":  score,
+                "niche":          parsed.get("niche", ""),
+                "accepted":       accepted,
+            })
+            if accepted:
                 _filtered += 1
                 deals.append(apply_affiliate_url(_compute_roi({
                     "site_name":      site.get("title", ""),
@@ -101,6 +113,16 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
                 })))
         except Exception as exc:
             _parse_fail += 1
+            all_candidates.append({
+                "site_name":      site.get("title", ""),
+                "url":            site.get("link", ""),
+                "deal_title":     "",
+                "deal_price":     "",
+                "original_price": "",
+                "quality_score":  None,
+                "niche":          "",
+                "accepted":       False,
+            })
             logger.warning(
                 "analysis_parse_failed",
                 f"Could not parse analysis for {site.get('title')}: {exc}",
@@ -170,6 +192,7 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
         "candidates":  len(sites),
         "runtime":     round(runtime, 1),
         "error":       None,
+        "all_candidates": all_candidates,
         "summary": {
             "discovered":  _discovered,
             "enriched":    _enriched,

@@ -74,6 +74,7 @@ class DashboardState:
         self.last_scan_time:      Optional[str]   = None
         self.last_error:          Optional[str]   = None
         self.last_scan_summary:   dict            = {}
+        self.last_candidates:     list[dict]      = []
 
     # ── reads ─────────────────────────────────────────────────────────────────
 
@@ -124,6 +125,14 @@ class DashboardState:
     def set_scan_summary(self, summary: dict) -> None:
         with self._lock:
             self.last_scan_summary = dict(summary)
+
+    def set_last_candidates(self, candidates: list[dict]) -> None:
+        with self._lock:
+            self.last_candidates = list(candidates)
+
+    def get_last_candidates(self) -> list[dict]:
+        with self._lock:
+            return list(self.last_candidates)
 
     def load_deals_from_file(self) -> None:
         """
@@ -222,6 +231,8 @@ async def _run_scan_background(force_domains: frozenset = frozenset()) -> None:
             state.set_scan_finished(error=None)
             if result.get("summary"):
                 state.set_scan_summary(result["summary"])
+            if result.get("all_candidates"):
+                state.set_last_candidates(result["all_candidates"])
             _success     = True
             _deals_count = result["deals_count"]
 
@@ -476,6 +487,18 @@ async def metrics_html(request: Request):
             "best_score":  m["best_score"],
             "last_scan":   m["last_scan"],
         },
+    )
+
+
+@app.get("/api/candidates_html", response_class=HTMLResponse)
+async def candidates_html(request: Request):
+    """All analyzed candidates from the last scan, accepted and rejected."""
+    candidates = state.get_last_candidates()
+    candidates_sorted = sorted(candidates, key=lambda c: c.get("quality_score") or -1, reverse=True)
+    return templates.TemplateResponse(
+        request=request,
+        name="candidates_table.html",
+        context={"candidates": candidates_sorted[:20]},
     )
 
 

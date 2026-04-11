@@ -1,0 +1,62 @@
+<!-- Last scan candidates partial — rendered by /api/candidates_html -->
+{% if not candidates %}
+  <p class="text-xs text-base-content/50 py-2">No scan data yet — run a scan to see candidates.</p>
+{% else %}
+  <p class="text-xs text-base-content/50 mb-2">
+    {{ candidates | length }} candidate{% if candidates | length != 1 %}s{% endif %} —
+    <span class="text-success">{{ candidates | selectattr('accepted') | list | length }} accepted</span>,
+    <span class="text-base-content/50">{{ candidates | rejectattr('accepted') | list | length }} rejected</span>
+  </p>
+  <div class="overflow-x-auto">
+    <table class="table table-sm table-zebra w-full text-xs">
+      <thead>
+        <tr>
+          <th class="w-16 text-center">Score</th>
+          <th>Site</th>
+          <th class="hidden md:table-cell">Niche</th>
+          <th class="hidden sm:table-cell w-24">Price</th>
+          <th class="hidden sm:table-cell w-24">Was</th>
+          <th class="w-24 text-center">Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in candidates %}
+        <tr class="hover {{ '' if c.accepted else 'opacity-50' }}">
+          <td class="text-center">
+            {% if c.quality_score is none %}
+              <span class="badge badge-ghost badge-sm">err</span>
+            {% elif c.quality_score >= 8 %}
+              <span class="badge badge-success font-bold">{{ c.quality_score }}</span>
+            {% elif c.quality_score >= 6 %}
+              <span class="badge badge-warning font-bold">{{ c.quality_score }}</span>
+            {% else %}
+              <span class="badge badge-error badge-sm">{{ c.quality_score }}</span>
+            {% endif %}
+          </td>
+          <td class="max-w-[12rem]">
+            <a href="{{ c.url }}" target="_blank" rel="noopener noreferrer"
+               class="link link-hover font-semibold truncate block" title="{{ c.site_name }}">
+              {{ c.site_name or c.url or "—" }}
+            </a>
+            {% if c.deal_title %}
+            <span class="text-base-content/50 truncate block" title="{{ c.deal_title }}">{{ c.deal_title[:60] }}</span>
+            {% endif %}
+          </td>
+          <td class="hidden md:table-cell text-base-content/60">{{ c.niche or "—" }}</td>
+          <td class="hidden sm:table-cell font-mono text-success">{{ c.deal_price or "—" }}</td>
+          <td class="hidden sm:table-cell font-mono text-base-content/50">
+            {% if c.original_price %}<span class="line-through">{{ c.original_price }}</span>{% else %}—{% endif %}
+          </td>
+          <td class="text-center">
+            {% if c.accepted %}
+              <span class="badge badge-success badge-sm">accepted</span>
+            {% else %}
+              <span class="badge badge-ghost badge-sm">rejected</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endif %}
