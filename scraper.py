@@ -1,4 +1,5 @@
 import hashlib
+import json as _json
 import random
 import re
 import time
@@ -158,6 +159,68 @@ _BLOCKED_DOMAINS = frozenset({
     "9to5mac.com",
     "9to5google.com",
     "androidpolice.com",
+    # Additional coupon/cashback/promo-code aggregators
+    "dealnews.com",
+    "bradsdeals.com",
+    "slickdeals.net",
+    "retailmenot.com",
+    "offers.com",
+    "valpak.com",
+    "honey.com",
+    "joinhoney.com",
+    "rakuten.com",
+    "dealsea.com",
+    "fattywallet.com",
+    "betterworldbooks.com",
+    "coupons.com",
+    "savings.com",
+    "hip2save.com",
+    "krazycouponlady.com",
+    "lozo.com",
+    "freebies2deals.com",
+    "dealcatcher.com",
+    "dealepic.com",
+    "cheapism.com",
+    "dealhack.com",
+    # Review / comparison / content sites
+    "financesonline.com",
+    "consumeraffairs.com",
+    "wirecutter.com",
+    "thespruce.com",
+    "goodhousekeeping.com",
+    "womansday.com",
+    "thebalance.com",
+    "bobvila.com",
+    "familyhandyman.com",
+    "housebeautiful.com",
+    "countryliving.com",
+    "esquire.com",
+    "menshealth.com",
+    "womenshealthmag.com",
+    "runnersworld.com",
+    "bicycling.com",
+    "prevention.com",
+    "popularmechanics.com",
+    "popsci.com",
+    "consumerreports.org",
+    "reviewed.com",
+    "rtings.com",
+    "bestproducts.com",
+    "cosmopolitan.com",
+    "elle.com",
+    "instyle.com",
+    "harpersbazaar.com",
+    # Large general marketplaces (additional)
+    "newegg.com",
+    "adorama.com",
+    "bhphotovideo.com",
+    "costco.com",
+    "samsclub.com",
+    "overstock.com",
+    "wayfair.com",
+    "chewy.com",
+    "zappos.com",
+    "6pm.com",
 })
 
 
@@ -663,7 +726,63 @@ def _a11y_collect_hints(snapshot: dict | None) -> list[str]:
     return hints[:10]
 
 
+def _extract_json_ld_product(soup: BeautifulSoup) -> dict:
+    """Return the first schema.org/Product object found in JSON-LD script tags, or {}."""
+    for script in soup.find_all("script", type="application/ld+json"):
+        try:
+            data = _json.loads(script.string or "")
+        except (ValueError, TypeError):
+            continue
+        items = data if isinstance(data, list) else [data]
+        # Expand @graph arrays
+        expanded: list[dict] = []
+        for item in items:
+            if isinstance(item, dict) and item.get("@graph"):
+                expanded.extend(g for g in item["@graph"] if isinstance(g, dict))
+            elif isinstance(item, dict):
+                expanded.append(item)
+        for item in expanded:
+            t = item.get("@type", "")
+            types = t if isinstance(t, list) else [t]
+            if any("Product" in str(tp) for tp in types):
+                return item
+    return {}
+
+
+def _compute_completeness(record: dict) -> float:
+    """Return 0.0–1.0: fraction of essential product fields present."""
+    essential = {
+        "deal_title": bool((record.get("deal_title") or "").strip()),
+        "deal_price": bool((record.get("deal_price") or "").strip()),
+        "image_url":  bool((record.get("image_url") or "").strip()),
+        "brand":      bool((record.get("brand") or "").strip()),
+    }
+    return sum(essential.values()) / len(essential)
+
+
+def _compute_canonical_key(record: dict) -> str:
+    """Deterministic product key for deduplication.
+
+    Priority: GTIN > (brand + title) hash > title hash.
+    Returns an empty string when no usable fields are present.
+    """
+    gtin = (record.get("gtin") or "").strip()
+    if gtin:
+        return f"gtin:{gtin}"
+    brand = (record.get("brand") or "").lower().strip()
+    title = re.sub(r"\s+", " ", (record.get("deal_title") or "").lower().strip())
+    key_text = "|".join(filter(None, [brand, title]))
+    if key_text:
+        h = hashlib.sha1(key_text.encode("utf-8")).hexdigest()[:16]
+        prefix = "bt" if brand else "t"
+        return f"{prefix}:{h}"
+    return ""
+
+
 def _extract_from_soup(soup: BeautifulSoup, url: str) -> dict:
+    # ── Structured-data-first: JSON-LD schema.org/Product ────────────────────
+    ld = _extract_json_ld_product(soup)
+
     title = ""
     og = soup.find("meta", property="og:title")
     if og and og.get("content"):
@@ -674,28 +793,40 @@ def _extract_from_soup(soup: BeautifulSoup, url: str) -> dict:
             title = re.sub(r"\s+", " ", h1.get_text(strip=True))[:500]
     if not title and soup.title and soup.title.string:
         title = re.sub(r"\s+", " ", soup.title.string.strip())[:500]
+    # JSON-LD product name as final fallback for title
+    if not title and ld.get("name"):
+        title = re.sub(r"\s+", " ", str(ld["name"]).strip())[:500]
 
     price = ""
-    price_el = soup.select_one('[itemprop="price"]')
-    if price_el:
-        price = (price_el.get("content") or price_el.get_text(strip=True) or "").strip()
+    # Prefer structured offers data from JSON-LD
+    ld_offers = ld.get("offers")
+    if isinstance(ld_offers, list) and ld_offers:
+        ld_offers = ld_offers[0]
+    if isinstance(ld_offers, dict):
+        ld_price = ld_offers.get("price") or ld_offers.get("lowPrice")
+        ld_currency = ld_offers.get("priceCurrency") or ""
+        if ld_price is not None:
+            price_str = str(ld_price).strip()
+            price = f"{ld_currency} {price_str}".strip() if ld_currency else price_str
+    if not price:
+        price_el = soup.select_one('[itemprop="price"]')
+        if price_el:
+            price = (price_el.get("content") or price_el.get_text(strip=True) or "").strip()
     if not price:
         m = re.search(r"\$\s*[0-9][0-9,]*(?:\.[0-9]{2})?", soup.get_text(" ", strip=True))
         if m:
             price = m.group(0).strip()
 
-    # ── Fix 2: original_price — strikethrough / compare-at patterns ──────────
+    # ── original_price — strikethrough / compare-at patterns ─────────────────
     original_price = ""
-    # Prefer semantic strikethrough tags that sites use for "was" prices
     for sel in ("del", "s"):
         el = soup.find(sel)
         if el:
             t = el.get_text(strip=True)
-            if re.search(r"[\$£€]?\s*[0-9]", t):   # must look like a price
+            if re.search(r"[\$£€]?\s*[0-9]", t):
                 original_price = re.sub(r"\s+", " ", t)[:80]
                 break
     if not original_price:
-        # Class-name patterns common on Shopify / WooCommerce / meh-style deal sites
         for css in (
             ".original-price",
             ".was-price",
@@ -704,7 +835,6 @@ def _extract_from_soup(soup: BeautifulSoup, url: str) -> dict:
             "[class*='original']",
             "[class*='was-price']",
             "[class*='compare']",
-            # meh.com and similar sites: retail / list price shown beside sale price
             "span.list-price",
             "[class*='list-price']",
             "[class*='retail']",
@@ -716,12 +846,58 @@ def _extract_from_soup(soup: BeautifulSoup, url: str) -> dict:
                     original_price = re.sub(r"\s+", " ", t)[:80]
                     break
 
-    # ── Fix 1: promo_copy — strip boilerplate before extracting text ─────────
+    # ── brand extraction (JSON-LD → microdata → og:brand) ────────────────────
+    brand = ""
+    ld_brand = ld.get("brand")
+    if isinstance(ld_brand, dict):
+        brand = str(ld_brand.get("name") or "").strip()
+    elif isinstance(ld_brand, str):
+        brand = ld_brand.strip()
+    if not brand:
+        brand_el = soup.select_one('[itemprop="brand"]')
+        if brand_el:
+            brand = (brand_el.get("content") or brand_el.get_text(strip=True) or "").strip()[:120]
+    if not brand:
+        og_brand = soup.find("meta", property="og:brand") or soup.find("meta", attrs={"name": "brand"})
+        if og_brand and og_brand.get("content"):
+            brand = og_brand["content"].strip()[:120]
+
+    # ── image_url extraction (JSON-LD → og:image → itemprop) ─────────────────
+    image_url = ""
+    ld_image = ld.get("image")
+    if isinstance(ld_image, list) and ld_image:
+        ld_image = ld_image[0]
+    if isinstance(ld_image, dict):
+        image_url = str(ld_image.get("url") or "").strip()
+    elif isinstance(ld_image, str):
+        image_url = ld_image.strip()
+    if not image_url:
+        og_img = soup.find("meta", property="og:image")
+        if og_img and og_img.get("content"):
+            image_url = og_img["content"].strip()
+    if not image_url:
+        img_el = soup.select_one('[itemprop="image"]')
+        if img_el:
+            image_url = (img_el.get("content") or img_el.get("src") or "").strip()
+
+    # ── GTIN / UPC / MPN extraction (JSON-LD → microdata) ────────────────────
+    gtin = ""
+    for gtin_field in ("gtin13", "gtin12", "gtin8", "gtin", "isbn"):
+        val = ld.get(gtin_field)
+        if val:
+            gtin = re.sub(r"[^0-9Xx]", "", str(val))[:30]
+            break
+    if not gtin:
+        gtin_el = soup.select_one(
+            '[itemprop="gtin13"], [itemprop="gtin12"], [itemprop="gtin8"], [itemprop="gtin"]'
+        )
+        if gtin_el:
+            gtin = re.sub(r"[^0-9Xx]", "", (gtin_el.get("content") or gtin_el.get_text(strip=True) or ""))[:30]
+
+    # ── promo_copy — strip boilerplate before extracting text ─────────────────
     main = soup.find("main") or soup.find("article") or soup.body
     promo = ""
     if main:
-        # Remove noisy boilerplate tags in-place on a copy so title/price
-        # extraction above is unaffected (they already ran against the full soup).
         import copy as _copy
         main_clean = _copy.copy(main)
         for tag in main_clean.find_all(["script", "style", "nav", "footer", "header", "aside"]):
@@ -729,13 +905,20 @@ def _extract_from_soup(soup: BeautifulSoup, url: str) -> dict:
         promo = re.sub(r"\s+", " ", main_clean.get_text(" ", strip=True))[:2000]
 
     signals = _collect_meh_signals(f"{title} {promo} {price}")
-    return {
+
+    result = {
         "deal_title":     title,
         "deal_price":     price,
         "original_price": original_price,
         "promo_copy":     promo,
         "meh_signals":    signals,
+        "brand":          brand,
+        "image_url":      image_url,
+        "gtin":           gtin,
     }
+    result["completeness_score"] = _compute_completeness(result)
+    result["canonical_key"] = _compute_canonical_key(result)
+    return result
 
 
 def _humanize_page_interaction(page) -> None:
@@ -876,6 +1059,11 @@ def scrape_deal_page_requests(url: str) -> dict:
             "screenshot_path": "",
             "scrape_method": "failed",
             "scrape_error": str(e),
+            "brand": "",
+            "image_url": "",
+            "gtin": "",
+            "completeness_score": 0.0,
+            "canonical_key": "",
         }
 
 
@@ -920,10 +1108,29 @@ def enrich_candidates(sites: list[dict]) -> list[dict]:
     """
     Fetch structured deal fields + screenshots (one browser, sequential pages).
     Playwright is not used concurrently; keep this phase serial before parallel LLM calls.
+
+    Candidates whose scraped completeness_score falls below
+    Config.SCRAPE_MIN_COMPLETENESS_PCT are logged and dropped before analysis.
     """
+    _EMPTY_EXTRA = {
+        "deal_title": "",
+        "deal_price": "",
+        "promo_copy": "",
+        "meh_signals": "",
+        "screenshot_path": "",
+        "scrape_method": "skipped",
+        "scrape_error": "missing link",
+        "brand": "",
+        "image_url": "",
+        "gtin": "",
+        "completeness_score": 0.0,
+        "canonical_key": "",
+    }
+
     if not sites:
         return []
     SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+    min_completeness = max(0.0, min(1.0, Config.SCRAPE_MIN_COMPLETENESS_PCT / 100.0))
     enriched: list[dict] = []
     try:
         from playwright.sync_api import sync_playwright
@@ -937,16 +1144,7 @@ def enrich_candidates(sites: list[dict]) -> list[dict]:
                 for site in sites:
                     url = site.get("link", "")
                     if not url:
-                        enriched.append({
-                            **site,
-                            "deal_title": "",
-                            "deal_price": "",
-                            "promo_copy": "",
-                            "meh_signals": "",
-                            "screenshot_path": "",
-                            "scrape_method": "skipped",
-                            "scrape_error": "missing link",
-                        })
+                        enriched.append({**site, **_EMPTY_EXTRA})
                         continue
                     try:
                         context = browser.new_context(
@@ -970,10 +1168,33 @@ def enrich_candidates(sites: list[dict]) -> list[dict]:
                         finally:
                             page.close()
                             context.close()
-                        enriched.append({**site, **extra})
+                        merged = {**site, **extra}
+                        score = extra.get("completeness_score", 0.0)
+                        if min_completeness > 0 and score < min_completeness:
+                            logger.info(
+                                "enrich_low_completeness_dropped",
+                                f"Dropping {url}: completeness {score:.2f} < {min_completeness:.2f}",
+                                url=url,
+                                completeness_score=score,
+                                min_completeness=min_completeness,
+                            )
+                            continue
+                        enriched.append(merged)
                     except Exception as e:
                         logger.error("enrich_site_failed", url=url, error=str(e), message=str(e))
-                        enriched.append({**site, **scrape_deal_page_requests(url)})
+                        extra = scrape_deal_page_requests(url)
+                        merged = {**site, **extra}
+                        score = extra.get("completeness_score", 0.0)
+                        if min_completeness > 0 and score < min_completeness:
+                            logger.info(
+                                "enrich_low_completeness_dropped",
+                                f"Dropping {url}: completeness {score:.2f} < {min_completeness:.2f} (after error)",
+                                url=url,
+                                completeness_score=score,
+                                min_completeness=min_completeness,
+                            )
+                            continue
+                        enriched.append(merged)
             finally:
                 browser.close()
     except Exception as e:
@@ -981,18 +1202,21 @@ def enrich_candidates(sites: list[dict]) -> list[dict]:
         for site in sites:
             url = site.get("link", "")
             if not url:
-                extra = {
-                    "deal_title": "",
-                    "deal_price": "",
-                    "promo_copy": "",
-                    "meh_signals": "",
-                    "screenshot_path": "",
-                    "scrape_method": "skipped",
-                    "scrape_error": "missing link",
-                }
+                extra = dict(_EMPTY_EXTRA)
             else:
                 extra = scrape_deal_page_requests(url)
-            enriched.append({**site, **extra})
+            merged = {**site, **extra}
+            score = extra.get("completeness_score", 0.0)
+            if min_completeness > 0 and score < min_completeness:
+                logger.info(
+                    "enrich_low_completeness_dropped",
+                    f"Dropping {url}: completeness {score:.2f} < {min_completeness:.2f} (http-only)",
+                    url=url,
+                    completeness_score=score,
+                    min_completeness=min_completeness,
+                )
+                continue
+            enriched.append(merged)
     return enriched
 
 
