@@ -1,5 +1,6 @@
 import requests
 import pytest
+from bs4 import BeautifulSoup
 from tenacity import wait_none
 
 import scraper
@@ -286,8 +287,6 @@ def test_search_keeps_rejection_samples_in_diagnostics(monkeypatch: pytest.Monke
 
 
 # ── Canonical product URL extraction tests ───────────────────────────────────
-
-from bs4 import BeautifulSoup
 
 
 def _make_soup(html: str) -> BeautifulSoup:
