@@ -75,10 +75,8 @@ def main():
                 logger.info("sheets_done", f"Wrote {len(deals)} deals to Google Sheet")
             else:
                 logger.warning("sheets_skipped", "Google Sheet write returned False (check config)")
-        except ImportError:
-            logger.warning("sheets_not_available", "sheets module not found — skipping Google Sheet write")
-        except Exception as e:
-            logger.error("sheets_failed", error=str(e), message=f"Sheet write failed: {e}")
+        except (ImportError, Exception, BaseException) as e:
+            logger.error("sheets_failed", error=str(e), message=f"Sheet write failed (will retry next run): {e}")
     else:
         logger.warning("no_deals_passed", message="No deals passed quality threshold")
 
