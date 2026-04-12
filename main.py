@@ -66,6 +66,19 @@ def main():
                        rationale=deal['rationale'][:100],
                        niche=deal['niche'],
                        quality_score=deal['quality_score'])
+
+        # Write accepted deals to Google Sheet
+        try:
+            from sheets import append_deals
+            sheets_ok = append_deals(deals)
+            if sheets_ok:
+                logger.info("sheets_done", f"Wrote {len(deals)} deals to Google Sheet")
+            else:
+                logger.warning("sheets_skipped", "Google Sheet write returned False (check config)")
+        except ImportError:
+            logger.warning("sheets_not_available", "sheets module not found — skipping Google Sheet write")
+        except Exception as e:
+            logger.error("sheets_failed", error=str(e), message=f"Sheet write failed: {e}")
     else:
         logger.warning("no_deals_passed", message="No deals passed quality threshold")
 
