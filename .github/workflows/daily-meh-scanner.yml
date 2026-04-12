@@ -17,6 +17,7 @@ jobs:
       SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_TOKEN_JSON }}
       GITHUB_REPOSITORY: ${{ github.repository }}
       # Project Pages live at https://user.github.io/<repo>/ — path-only <base> fixes relative links
       MEH_DASHBOARD_BASE_PATH: /${{ github.event.repository.name }}/

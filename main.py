@@ -7,6 +7,7 @@ from dashboard_export import export_daily_dashboard, write_project_root_candidat
 from logger import logger, log_run_summary
 from scoring import build_candidate_records
 from scraper import enrich_candidates, mark_candidates_seen, search_for_deal_sites
+from sheets import append_deals
 
 def main():
     start_time = time.time()
@@ -68,6 +69,15 @@ def main():
                        quality_score=deal['quality_score'])
     else:
         logger.warning("no_deals_passed", message="No deals passed quality threshold")
+
+    try:
+        sheets_ok = append_deals(deals)
+        if sheets_ok:
+            logger.info("sheets_write_done", message=f"Wrote {len(deals)} deal(s) to Google Sheet")
+        else:
+            logger.warning("sheets_write_skipped", message="Google Sheet write skipped (check GOOGLE_SHEET_ID and GOOGLE_SERVICE_ACCOUNT_JSON)")
+    except Exception as e:
+        logger.error("sheets_write_failed", error=str(e), message=f"Google Sheet write failed: {e}")
 
     runtime = time.time() - start_time
     try:
