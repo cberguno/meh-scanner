@@ -6,6 +6,8 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Optional
+from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -14,6 +16,27 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from config import Config
 from db import init_db, is_site_seen, mark_site_seen, get_source_status, _extract_domain as _db_extract_domain, _normalize_url_for_seen as normalize_url
 from logger import logger, log_search_start, log_search_complete, log_site_scraped
+
+# ---------------------------------------------------------------------------
+# Optional structured-data libraries — fail gracefully if not installed so
+# the module still imports without them (useful in environments where the full
+# requirements haven't been installed yet).
+# ---------------------------------------------------------------------------
+try:
+    import extruct  # type: ignore
+    from w3lib.html import get_base_url  # type: ignore
+    _HAS_EXTRUCT = True
+except ImportError:  # pragma: no cover
+    extruct = None  # type: ignore
+    get_base_url = None  # type: ignore
+    _HAS_EXTRUCT = False
+
+try:
+    from price_parser import Price as _PriceParser  # type: ignore
+    _HAS_PRICE_PARSER = True
+except ImportError:  # pragma: no cover
+    _PriceParser = None  # type: ignore
+    _HAS_PRICE_PARSER = False
 
 SCREENSHOTS_DIR = Path("logs") / "screenshots"
 
@@ -53,6 +76,349 @@ MEH_SIGNAL_KEYWORDS = (
 
 SERPER_RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 _LAST_SEARCH_DIAGNOSTICS: dict = {}
+
+# ---------------------------------------------------------------------------
+# Structured-data extraction helpers
+# ---------------------------------------------------------------------------
+
+# Minimal TLD → ISO-4217 currency inference fallback used when priceCurrency
+# is absent from the page's structured data.
+_TLD_CURRENCY_MAP: dict[str, str] = {
+    ".co.uk": "GBP",
+    ".uk":    "GBP",
+    ".de":    "EUR",
+    ".fr":    "EUR",
+    ".es":    "EUR",
+    ".it":    "EUR",
+    ".nl":    "EUR",
+    ".eu":    "EUR",
+    ".ca":    "CAD",
+    ".au":    "AUD",
+    ".jp":    "JPY",
+    ".us":    "USD",
+    ".com":   "USD",
+    ".co":    "USD",
+}
+
+# Map common currency symbols / informal codes returned by price-parser to
+# their ISO-4217 equivalents so we never store raw symbols like "$".
+_CURRENCY_SYMBOL_MAP: dict[str, str] = {
+    "$":   "USD",
+    "us$": "USD",
+    "usd": "USD",
+    "€":   "EUR",
+    "eur": "EUR",
+    "£":   "GBP",
+    "gbp": "GBP",
+    "¥":   "JPY",
+    "jpy": "JPY",
+    "₹":   "INR",
+    "inr": "INR",
+    "a$":  "AUD",
+    "aud": "AUD",
+    "c$":  "CAD",
+    "cad": "CAD",
+}
+
+# Regex patterns for GTIN / MPN / SKU extraction from raw HTML text.
+_GTIN_RE = re.compile(
+    r'\b(?:gtin(?:8|12|13|14)?|ean|upc|isbn)\s*[:\s=]\s*([0-9]{6,14})\b',
+    re.IGNORECASE,
+)
+_MPN_RE = re.compile(
+    r'\b(?:mpn|model(?:\s*number)?|sku|part(?:\s*number)?)\s*[:\s=]\s*([A-Za-z0-9][-A-Za-z0-9]{3,})\b',
+    re.IGNORECASE,
+)
+# Broader price-with-symbol pattern used only as last-resort fallback.
+_PRICE_SYMBOL_RE = re.compile(
+    r'([$€£₹¥]\s?\d[\d,\.]{0,}|\d[\d,\.]{0,}\s?(?:USD|EUR|GBP|CAD|AUD|JPY))',
+    re.IGNORECASE,
+)
+
+# Fields considered "complete" for scoring purposes.
+_COMPLETENESS_FIELDS = ("deal_title", "deal_price", "product_image", "brand", "currency")
+
+
+def _infer_currency_from_url(url: str) -> Optional[str]:
+    """Return a best-guess ISO currency code derived from the URL's TLD.
+
+    Iterates ``_TLD_CURRENCY_MAP`` from most-specific to least-specific suffix
+    so ``.co.uk`` matches before ``.uk``.
+    """
+    try:
+        hostname = urlparse(url).hostname or ""
+        for tld, currency in _TLD_CURRENCY_MAP.items():
+            if hostname.endswith(tld):
+                return currency
+    except Exception:
+        pass
+    return None
+
+
+def _extract_structured_data(html: str, url: str) -> dict[str, Any]:
+    """Extract JSON-LD, microdata, and OpenGraph structured data from *html*.
+
+    Returns a dict with keys ``json-ld``, ``microdata``, ``opengraph``.
+    Falls back to an empty dict when extruct is unavailable or raises.
+    """
+    if not _HAS_EXTRUCT or not html:
+        return {}
+    try:
+        base_url = get_base_url(html, url)
+        return extruct.extract(
+            html,
+            base_url=base_url,
+            syntaxes=["json-ld", "microdata", "opengraph"],
+            uniform=True,
+        )
+    except Exception as exc:
+        logger.debug("extruct_failed", str(exc), url=url)
+        return {}
+
+
+def _find_product_jsonld(structured: dict) -> dict[str, Any]:
+    """Return the first schema.org Product node from JSON-LD data (or {})."""
+    for item in structured.get("json-ld") or []:
+        types = item.get("@type") or item.get("type") or ""
+        if isinstance(types, list):
+            types = " ".join(types)
+        if "Product" in str(types):
+            return item
+    return {}
+
+
+def _find_product_microdata(structured: dict) -> dict[str, Any]:
+    """Return the first schema.org Product node from microdata (or {})."""
+    for item in structured.get("microdata") or []:
+        types = item.get("@type") or item.get("type") or ""
+        if isinstance(types, list):
+            types = " ".join(types)
+        if "Product" in str(types):
+            return item
+    return {}
+
+
+def _select_best_offer(offers: Any) -> dict[str, Any]:
+    """Normalise a single offer dict or a list of offers to one best offer.
+
+    "Best" here means the first offer that carries a ``price`` field.  When
+    *offers* is a list, the offer with the lowest ``price`` value is preferred
+    to surface the best current deal.
+    """
+    if not offers:
+        return {}
+    if isinstance(offers, dict):
+        return offers
+    if isinstance(offers, list):
+        candidates = [o for o in offers if isinstance(o, dict) and o.get("price") is not None]
+        if not candidates:
+            return offers[0] if offers else {}
+        try:
+            return min(candidates, key=lambda o: _parse_price_text(str(o["price"])).get("amount") or float("inf"))
+        except (ValueError, TypeError):
+            return candidates[0]
+    return {}
+
+
+def _parse_price_text(text: Optional[str]) -> dict[str, Any]:
+    """Parse a raw price string into ``{amount, currency}`` using price-parser.
+
+    Currency symbols are normalized to ISO-4217 codes using
+    ``_CURRENCY_SYMBOL_MAP`` so callers always receive a standardized code
+    (e.g. ``"USD"`` instead of ``"$"``).
+
+    Falls back to a simple regex extraction when price-parser is unavailable.
+    Returns an empty dict when parsing fails.
+    """
+    if not text:
+        return {}
+    if _HAS_PRICE_PARSER:
+        try:
+            parsed = _PriceParser.fromstring(str(text))
+            if parsed.amount is not None:
+                raw_cur = (parsed.currency or "").strip()
+                # Normalize symbol to ISO code; fall back to uppercased value, or None for empty.
+                currency = _CURRENCY_SYMBOL_MAP.get(raw_cur.lower(), raw_cur.upper() if raw_cur else None)
+                return {"amount": float(parsed.amount), "currency": currency}
+        except Exception:
+            pass
+    # Regex fallback: grab the first symbol+number pattern
+    m = _PRICE_SYMBOL_RE.search(str(text))
+    if m:
+        raw = m.group(0).strip()
+        digits = re.sub(r"[^\d\.]", "", raw.replace(",", ""))
+        try:
+            return {"amount": float(digits), "currency": None}
+        except ValueError:
+            pass
+    return {}
+
+
+def _extract_price_from_product(product: dict[str, Any]) -> dict[str, Any]:
+    """Pull price / currency out of a schema.org Product node.
+
+    Handles both a single ``offers`` dict and a list of offers, including
+    the nested ``priceCurrency`` field.  Currency values are normalized to
+    ISO-4217 codes via ``_CURRENCY_SYMBOL_MAP``.
+    """
+    offer = _select_best_offer(product.get("offers"))
+    price_raw = (offer.get("price") or offer.get("lowPrice") or "")
+    currency_raw = (offer.get("priceCurrency") or offer.get("currency") or "").strip()
+    # Normalize symbol to ISO code; fall back to uppercased value, or None for empty.
+    currency = _CURRENCY_SYMBOL_MAP.get(currency_raw.lower(), currency_raw.upper() if currency_raw else None)
+    result = _parse_price_text(str(price_raw)) if price_raw else {}
+    if currency and not result.get("currency"):
+        result["currency"] = currency
+    return result
+
+
+def _extract_gtin(product: dict[str, Any], html: str) -> tuple[Optional[str], Optional[str]]:
+    """Return ``(gtin, mpn)`` extracted from *product* structured data or *html*.
+
+    Priority order: JSON-LD fields → offer fields → HTML regex.
+    """
+    # Standard schema.org GTIN fields (most specific first)
+    for field in ("gtin13", "gtin12", "gtin8", "gtin14", "gtin", "isbn"):
+        val = product.get(field)
+        if val and isinstance(val, str) and val.strip():
+            return val.strip(), product.get("mpn") or _extract_mpn_html(html)
+
+    # MPN / SKU in the offer
+    offer = _select_best_offer(product.get("offers"))
+    gtin_from_offer = offer.get("gtin13") or offer.get("gtin") or offer.get("isbn")
+    if gtin_from_offer:
+        return str(gtin_from_offer).strip(), product.get("mpn") or _extract_mpn_html(html)
+
+    # HTML-level regex fallback
+    gtin_m = _GTIN_RE.search(html)
+    if gtin_m:
+        return gtin_m.group(1).strip(), _extract_mpn_html(html)
+
+    return None, _extract_mpn_html(html)
+
+
+def _extract_mpn_html(html: str) -> Optional[str]:
+    """Return MPN/SKU from raw HTML using a regex heuristic, or None."""
+    m = _MPN_RE.search(html)
+    return m.group(1).strip() if m else None
+
+
+def _extract_brand(product: dict[str, Any], soup: BeautifulSoup) -> Optional[str]:
+    """Return the product brand from structured data or HTML meta tags."""
+    brand = product.get("brand")
+    if isinstance(brand, dict):
+        brand = brand.get("name") or brand.get("@name")
+    if brand and isinstance(brand, str):
+        return brand.strip()
+    # manufacturer field (schema.org alternative)
+    manufacturer = product.get("manufacturer")
+    if isinstance(manufacturer, dict):
+        manufacturer = manufacturer.get("name") or manufacturer.get("@name")
+    if manufacturer and isinstance(manufacturer, str):
+        return manufacturer.strip()
+    # OpenGraph or meta brand tag
+    brand_meta = soup.find("meta", attrs={"property": "product:brand"}) or \
+                 soup.find("meta", attrs={"name": "brand"})
+    if brand_meta and brand_meta.get("content"):
+        return brand_meta["content"].strip()
+    return None
+
+
+def _extract_image(product: dict[str, Any], soup: BeautifulSoup) -> Optional[str]:
+    """Return the best product image URL from structured data or OG meta tags."""
+    img = product.get("image")
+    if isinstance(img, list):
+        img = img[0] if img else None
+    if isinstance(img, dict):
+        img = img.get("url") or img.get("@id")
+    if img and isinstance(img, str):
+        return img.strip()
+    # OpenGraph fallback
+    og_img = soup.find("meta", attrs={"property": "og:image"})
+    if og_img and og_img.get("content"):
+        return og_img["content"].strip()
+    return None
+
+
+def _validate_image_url(image_url: Optional[str], timeout: int = 5) -> bool:
+    """Lightweight HEAD check: verify *image_url* exists and is an image type.
+
+    Returns True when the URL responds with a 2xx status and an image
+    content-type.  Silently returns False on any error so extraction never
+    blocks on a network call.
+    """
+    if not image_url:
+        return False
+    try:
+        resp = requests.head(image_url, timeout=timeout, allow_redirects=True)
+        content_type = resp.headers.get("content-type", "")
+        return resp.ok and "image" in content_type.lower()
+    except Exception:
+        return False
+
+
+def _compute_completeness_score(record: dict[str, Any]) -> float:
+    """Return a 0.0–1.0 completeness fraction based on key product fields.
+
+    A higher score means more fields are populated; used to rank records and
+    decide whether to trigger a re-scrape.
+
+    TODO (future): weight fields differently — price and title matter more
+    than MPN or GTIN for deal-site discovery ranking.
+    """
+    present = sum(1 for f in _COMPLETENESS_FIELDS if record.get(f))
+    return round(present / len(_COMPLETENESS_FIELDS), 2)
+
+
+def _compute_confidence_score(record: dict[str, Any], used_structured_data: bool) -> float:
+    """Return a 0.0–1.0 confidence score reflecting extraction reliability.
+
+    Structured-data sources earn a base bonus because they are explicit
+    machine-readable annotations rather than heuristic guesses.
+
+    TODO (future): incorporate source reliability_score from the source
+    registry DB and image validation results into confidence weighting.
+    """
+    score = 0.5 if used_structured_data else 0.2
+    # Bonus for high completeness
+    score += 0.3 * _compute_completeness_score(record)
+    # Bonus if we found a GTIN (strongest canonical identifier)
+    if record.get("gtin"):
+        score += 0.1
+    # Bonus if currency is known
+    if record.get("currency"):
+        score += 0.1
+    return round(min(score, 1.0), 2)
+
+
+def _compute_canonical_key(record: dict[str, Any]) -> str:
+    """Return a stable, deterministic key for downstream deduplication.
+
+    Priority: GTIN (strongest) → brand+model → brand+title → title alone.
+
+    TODO (future): replace title-hash fallback with a vector-embedding-based
+    cluster key (e.g. CLIP or all-MiniLM) for semantic deduplication across
+    merchants that describe the same product differently.
+    """
+    if record.get("gtin"):
+        return f"gtin:{record['gtin'].strip()}"
+    brand = (record.get("brand") or "").lower().strip()
+    mpn = (record.get("mpn") or "").lower().strip()
+    title = (record.get("deal_title") or "").lower().strip()
+    # Priority: brand+mpn → brand+title → title alone
+    if brand and mpn:
+        key_parts = [brand, mpn]
+    elif brand:
+        key_parts = [brand, title[:80]] if title else [brand]
+    elif title:
+        key_parts = [title[:80]]
+    else:
+        key_parts = []
+    if key_parts:
+        raw_key = "|".join(key_parts)
+        return "bm:" + hashlib.sha1(raw_key.encode("utf-8")).hexdigest()[:16]
+    return "t:" + hashlib.sha1(title.encode("utf-8")).hexdigest()[:16]
+
 
 def score_meh_vibe(title, snippet):
     """Cheap heuristic scoring for 'Meh vibe' before Playwright visit"""
@@ -663,11 +1029,60 @@ def _a11y_collect_hints(snapshot: dict | None) -> list[str]:
     return hints[:10]
 
 
-def _extract_from_soup(soup: BeautifulSoup, url: str) -> dict:
-    title = ""
-    og = soup.find("meta", property="og:title")
-    if og and og.get("content"):
-        title = og["content"].strip()
+def _extract_from_soup(soup: BeautifulSoup, url: str, html: str = "") -> dict:
+    """Extract product fields from *soup*, with JSON-LD / microdata priority.
+
+    Parameters
+    ----------
+    soup:
+        Parsed HTML document.
+    url:
+        Final page URL (used for currency inference and structured-data base
+        URL resolution).
+    html:
+        Raw HTML string.  When provided, enables extruct-based structured-data
+        parsing (JSON-LD, microdata, OpenGraph).  Falls back to heuristic
+        extraction when empty or when extruct is unavailable.
+
+    Returns
+    -------
+    dict
+        Always contains the legacy keys expected by downstream code
+        (``deal_title``, ``deal_price``, ``original_price``, ``promo_copy``,
+        ``meh_signals``) plus enriched keys added by this improvement:
+        ``product_image``, ``brand``, ``gtin``, ``mpn``, ``currency``,
+        ``price_amount``, ``completeness_score``, ``confidence_score``,
+        ``canonical_key``.
+    """
+    # ------------------------------------------------------------------
+    # 1. Structured-data extraction (JSON-LD → microdata → OpenGraph)
+    # ------------------------------------------------------------------
+    structured = _extract_structured_data(html or str(soup), url)
+    product = _find_product_jsonld(structured)
+    used_structured = bool(product)
+    if not product:
+        product = _find_product_microdata(structured)
+        used_structured = bool(product)
+
+    og_data: dict[str, Any] = {}
+    for og_item in structured.get("opengraph") or []:
+        if isinstance(og_item, dict):
+            og_data.update(og_item)
+
+    # ------------------------------------------------------------------
+    # 2. Title — JSON-LD → OG → h1 → <title>
+    # ------------------------------------------------------------------
+    title: str = ""
+    if product.get("name"):
+        title = str(product["name"]).strip()[:500]
+    if not title:
+        og_title = og_data.get("og:title") or og_data.get("title")
+        if og_title:
+            title = str(og_title).strip()[:500]
+    if not title:
+        og_meta = soup.find("meta", property="og:title")
+        if og_meta and og_meta.get("content"):
+            title = og_meta["content"].strip()[:500]
     if not title:
         h1 = soup.find("h1")
         if h1:
@@ -675,27 +1090,64 @@ def _extract_from_soup(soup: BeautifulSoup, url: str) -> dict:
     if not title and soup.title and soup.title.string:
         title = re.sub(r"\s+", " ", soup.title.string.strip())[:500]
 
-    price = ""
-    price_el = soup.select_one('[itemprop="price"]')
-    if price_el:
-        price = (price_el.get("content") or price_el.get_text(strip=True) or "").strip()
-    if not price:
-        m = re.search(r"\$\s*[0-9][0-9,]*(?:\.[0-9]{2})?", soup.get_text(" ", strip=True))
-        if m:
-            price = m.group(0).strip()
+    # ------------------------------------------------------------------
+    # 3. Price / currency — JSON-LD offers → itemprop → regex
+    # ------------------------------------------------------------------
+    price_obj = _extract_price_from_product(product)
+    price_str: str = ""
+    # Distinguish between an explicitly stated currency (from structured data)
+    # versus a currency guessed from a price symbol — TLD inference should
+    # override the latter but never the former.
+    currency_explicit: Optional[str] = price_obj.get("currency")    # from JSON-LD/microdata
+    currency_symbol: Optional[str] = None                           # from price-text symbol
+    price_amount: Optional[float] = price_obj.get("amount")
 
-    # ── Fix 2: original_price — strikethrough / compare-at patterns ──────────
+    if price_amount is not None:
+        # Structured data provided a price; format a display string using ISO code.
+        cur = currency_explicit or "USD"
+        price_str = f"{price_amount:.2f} {cur}"
+    else:
+        # itemprop microdata fallback
+        price_el = soup.select_one('[itemprop="price"]')
+        if price_el:
+            raw_price = (price_el.get("content") or price_el.get_text(strip=True) or "").strip()
+            if raw_price:
+                price_obj2 = _parse_price_text(raw_price)
+                price_amount = price_obj2.get("amount")
+                currency_symbol = price_obj2.get("currency")
+                price_str = raw_price
+        if not price_str:
+            # priceCurrency meta tag (explicit, so treat as authoritative)
+            cur_meta = soup.select_one('meta[itemprop="priceCurrency"]')
+            if cur_meta and cur_meta.get("content"):
+                currency_explicit = currency_explicit or cur_meta["content"].strip().upper()
+            # Dollar-sign regex last resort
+            m = re.search(r"\$\s*[0-9][0-9,]*(?:\.[0-9]{2})?", soup.get_text(" ", strip=True))
+            if m:
+                price_str = m.group(0).strip()
+                price_obj3 = _parse_price_text(price_str)
+                price_amount = price_obj3.get("amount")
+                currency_symbol = currency_symbol or price_obj3.get("currency")
+
+    # Currency priority:
+    #   1. Explicit value from structured data or priceCurrency meta tag (most reliable)
+    #   2. TLD-inferred value (second most reliable for non-annotated sites)
+    #   3. Symbol-derived guess from price text (least reliable: $ ≠ always USD)
+    tld_currency = _infer_currency_from_url(url)
+    currency: Optional[str] = currency_explicit or tld_currency or currency_symbol
+
+    # ------------------------------------------------------------------
+    # 4. Original / compare-at price — strikethrough / class patterns
+    # ------------------------------------------------------------------
     original_price = ""
-    # Prefer semantic strikethrough tags that sites use for "was" prices
     for sel in ("del", "s"):
         el = soup.find(sel)
         if el:
             t = el.get_text(strip=True)
-            if re.search(r"[\$£€]?\s*[0-9]", t):   # must look like a price
+            if re.search(r"[\$£€]?\s*[0-9]", t):
                 original_price = re.sub(r"\s+", " ", t)[:80]
                 break
     if not original_price:
-        # Class-name patterns common on Shopify / WooCommerce / meh-style deal sites
         for css in (
             ".original-price",
             ".was-price",
@@ -704,7 +1156,6 @@ def _extract_from_soup(soup: BeautifulSoup, url: str) -> dict:
             "[class*='original']",
             "[class*='was-price']",
             "[class*='compare']",
-            # meh.com and similar sites: retail / list price shown beside sale price
             "span.list-price",
             "[class*='list-price']",
             "[class*='retail']",
@@ -716,25 +1167,65 @@ def _extract_from_soup(soup: BeautifulSoup, url: str) -> dict:
                     original_price = re.sub(r"\s+", " ", t)[:80]
                     break
 
-    # ── Fix 1: promo_copy — strip boilerplate before extracting text ─────────
+    # ------------------------------------------------------------------
+    # 5. Promo copy — strip boilerplate from main content area
+    # ------------------------------------------------------------------
     main = soup.find("main") or soup.find("article") or soup.body
     promo = ""
     if main:
-        # Remove noisy boilerplate tags in-place on a copy so title/price
-        # extraction above is unaffected (they already ran against the full soup).
         import copy as _copy
         main_clean = _copy.copy(main)
         for tag in main_clean.find_all(["script", "style", "nav", "footer", "header", "aside"]):
             tag.decompose()
         promo = re.sub(r"\s+", " ", main_clean.get_text(" ", strip=True))[:2000]
 
-    signals = _collect_meh_signals(f"{title} {promo} {price}")
-    return {
+    # ------------------------------------------------------------------
+    # 6. Brand, image, GTIN / MPN from structured data
+    # ------------------------------------------------------------------
+    brand = _extract_brand(product, soup)
+    product_image = _extract_image(product, soup)
+    gtin, mpn = _extract_gtin(product, html or "")
+
+    # ------------------------------------------------------------------
+    # 7. Meh signals from full text
+    # ------------------------------------------------------------------
+    signals = _collect_meh_signals(f"{title} {promo} {price_str}")
+
+    # ------------------------------------------------------------------
+    # 8. Quality scoring and canonical key
+    # ------------------------------------------------------------------
+    base_record: dict[str, Any] = {
         "deal_title":     title,
-        "deal_price":     price,
+        "deal_price":     price_str,
         "original_price": original_price,
         "promo_copy":     promo,
         "meh_signals":    signals,
+        "product_image":  product_image,
+        "brand":          brand,
+        "gtin":           gtin,
+        "mpn":            mpn,
+        "currency":       currency,
+        "price_amount":   price_amount,
+    }
+    completeness = _compute_completeness_score(base_record)
+    confidence = _compute_confidence_score(base_record, used_structured_data=used_structured)
+    canonical_key = _compute_canonical_key(base_record)
+
+    logger.debug(
+        "extract_from_soup",
+        f"Extracted: title={bool(title)} price={bool(price_str)} brand={bool(brand)} "
+        f"gtin={bool(gtin)} completeness={completeness} confidence={confidence}",
+        url=url,
+        used_structured_data=used_structured,
+        completeness_score=completeness,
+        confidence_score=confidence,
+    )
+
+    return {
+        **base_record,
+        "completeness_score": completeness,
+        "confidence_score":   confidence,
+        "canonical_key":      canonical_key,
     }
 
 
@@ -804,7 +1295,7 @@ def _extract_from_playwright_page(page, url: str) -> dict:
 
     html = page.content()
     soup = BeautifulSoup(html, "html.parser")
-    parsed = _extract_from_soup(soup, url)
+    parsed = _extract_from_soup(soup, url, html=html)
     if deal_title:
         parsed["deal_title"] = deal_title
 
@@ -860,7 +1351,7 @@ def scrape_deal_page_requests(url: str) -> dict:
         resp = requests.get(url, headers=headers, timeout=20)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
-        data = _extract_from_soup(soup, url)
+        data = _extract_from_soup(soup, url, html=resp.text)
         data["screenshot_path"] = ""
         data["scrape_method"] = "requests"
         data["scrape_error"] = ""
@@ -869,13 +1360,23 @@ def scrape_deal_page_requests(url: str) -> dict:
     except Exception as e:
         logger.error("deal_page_http_failed", url=url, error=str(e), message=str(e))
         return {
-            "deal_title": "",
-            "deal_price": "",
-            "promo_copy": "",
-            "meh_signals": "",
-            "screenshot_path": "",
-            "scrape_method": "failed",
-            "scrape_error": str(e),
+            "deal_title":         "",
+            "deal_price":         "",
+            "original_price":     "",
+            "promo_copy":         "",
+            "meh_signals":        "",
+            "product_image":      None,
+            "brand":              None,
+            "gtin":               None,
+            "mpn":                None,
+            "currency":           None,
+            "price_amount":       None,
+            "completeness_score": 0.0,
+            "confidence_score":   0.0,
+            "canonical_key":      "",
+            "screenshot_path":    "",
+            "scrape_method":      "failed",
+            "scrape_error":       str(e),
         }
 
 
@@ -916,10 +1417,49 @@ def scrape_deal_page(url: str) -> dict:
         return scrape_deal_page_requests(url)
 
 
+def _make_skip_record(reason: str) -> dict[str, Any]:
+    """Return a minimal 'skipped' scrape record with all expected keys populated."""
+    return {
+        "deal_title":         "",
+        "deal_price":         "",
+        "original_price":     "",
+        "promo_copy":         "",
+        "meh_signals":        "",
+        "product_image":      None,
+        "brand":              None,
+        "gtin":               None,
+        "mpn":                None,
+        "currency":           None,
+        "price_amount":       None,
+        "completeness_score": 0.0,
+        "confidence_score":   0.0,
+        "canonical_key":      "",
+        "screenshot_path":    "",
+        "scrape_method":      "skipped",
+        "scrape_error":       reason,
+    }
+
+
 def enrich_candidates(sites: list[dict]) -> list[dict]:
     """
     Fetch structured deal fields + screenshots (one browser, sequential pages).
     Playwright is not used concurrently; keep this phase serial before parallel LLM calls.
+
+    Each enriched record now includes completeness_score, confidence_score, and
+    canonical_key in addition to the legacy scraping fields so downstream
+    consumers can filter or rank by data quality.
+
+    TODO (future): expose completeness_score in the dashboard quality panel and
+    trigger an automatic re-scrape for records below a configurable threshold.
+
+    TODO (future): use canonical_key + gtin for cross-merchant deduplication
+    before writing to Google Sheets.
+
+    TODO (future): implement advanced monitoring — alert when the average
+    completeness_score for a daily run drops below a configured threshold.
+
+    TODO (future): cluster products by canonical_key to detect when multiple
+    seed sites are featuring the same underlying product on the same day.
     """
     if not sites:
         return []
@@ -937,16 +1477,7 @@ def enrich_candidates(sites: list[dict]) -> list[dict]:
                 for site in sites:
                     url = site.get("link", "")
                     if not url:
-                        enriched.append({
-                            **site,
-                            "deal_title": "",
-                            "deal_price": "",
-                            "promo_copy": "",
-                            "meh_signals": "",
-                            "screenshot_path": "",
-                            "scrape_method": "skipped",
-                            "scrape_error": "missing link",
-                        })
+                        enriched.append({**site, **_make_skip_record("missing link")})
                         continue
                     try:
                         context = browser.new_context(
@@ -981,15 +1512,7 @@ def enrich_candidates(sites: list[dict]) -> list[dict]:
         for site in sites:
             url = site.get("link", "")
             if not url:
-                extra = {
-                    "deal_title": "",
-                    "deal_price": "",
-                    "promo_copy": "",
-                    "meh_signals": "",
-                    "screenshot_path": "",
-                    "scrape_method": "skipped",
-                    "scrape_error": "missing link",
-                }
+                extra: dict[str, Any] = _make_skip_record("missing link")
             else:
                 extra = scrape_deal_page_requests(url)
             enriched.append({**site, **extra})

@@ -9,6 +9,11 @@ requests>=2.33.1
 pip-audit
 tenacity
 beautifulsoup4
+# Structured-data extraction and price parsing (scraper improvements)
+extruct>=0.16.0
+w3lib>=2.1.0
+price-parser>=0.3.4
+lxml>=5.0.0
 # dashboard
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0

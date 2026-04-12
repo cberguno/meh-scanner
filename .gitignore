@@ -10,6 +10,9 @@ public/index.html
 public/latest.json
 public/.nojekyll
 
+# Test artifacts
+_pytest_tmp_work/
+
 # IDE / tool dirs
 .cursor/
 .claude/
