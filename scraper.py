@@ -195,6 +195,21 @@ _BLOCKED_DOMAINS = frozenset({
     "pgmusic.com",
     "catalog.watrend.com",
     "steamcommunity.com",
+    # Coupon aggregators / cashback / deal communities (not one-deal-a-day sites)
+    "slickdeals.net",
+    "bradsdeals.com",
+    "dealcatcher.com",
+    "dealsplus.com",
+    "groupon.com",
+    "livingsocial.com",
+    "joinhoney.com",
+    "retailmenot.com",
+    "offers.com",
+    "dealspotr.com",
+    "couponfollow.com",
+    "rakuten.com",
+    "couponcabin.com",
+    "buyvia.com",
 })
 
 

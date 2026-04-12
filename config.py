@@ -60,6 +60,13 @@ class Config:
         {"title": "Last Bottle",     "link": "https://lastbottle.com",        "snippet": "Single wine deal per day until gone"},
         {"title": "Yugster",         "link": "https://www.yugster.com",       "snippet": "Electronics gadget daily deal"},
         {"title": "Woot",            "link": "https://www.woot.com",          "snippet": "Daily deals electronics home tools"},
+        # ── From deal sites directory ──
+        {"title": "StackSocial",     "link": "https://stacksocial.com",      "snippet": "Curated tech software bundle deals limited-time"},
+        {"title": "DailySteals",     "link": "https://www.dailysteals.com",  "snippet": "Daily deals flash sales electronics home goods"},
+        {"title": "The Inventory",   "link": "https://theinventory.com",     "snippet": "Editor-selected daily sale lifestyle gadgets"},
+        {"title": "BestDealsToday",  "link": "https://www.bestdealstoday.com", "snippet": "Handpicked daily bargains clearance deals"},
+        {"title": "TechBargains",    "link": "https://www.techbargains.com", "snippet": "Curated tech deals flash sales laptops electronics"},
+        {"title": "DealNews",        "link": "https://dealnews.com",         "snippet": "Curated deal alerts tech appliances editorial"},
     ]
 
     # ── Discovery queries: find NEW sites beyond the seed list ───────────────
