@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Meh-Scanner — Daily deals</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 1.25rem; background: #1a1b26; color: #c0caf5; }
+    h1 { font-size: 1.35rem; margin-bottom: 0.35rem; }
+    .last-updated { font-size: 1.05rem; color: #a9b1d6; margin: 0 0 0.5rem 0; }
+    .last-updated time { font-weight: 600; color: #bb9af7; }
+    .meta { color: #565f89; font-size: 0.9rem; margin-bottom: 1rem; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin-bottom: 1rem; }
+    .toolbar label { color: #a9b1d6; font-size: 0.85rem; }
+    .toolbar input, .toolbar select { background: #24283b; border: 1px solid #3b4261; color: #c0caf5; padding: 0.35rem 0.5rem; border-radius: 4px; }
+    .toolbar input { min-width: 12rem; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+    th, td { border: 1px solid #3b4261; padding: 0.5rem 0.6rem; text-align: left; vertical-align: top; }
+    th { background: #24283b; cursor: pointer; user-select: none; }
+    th:hover { background: #364a82; }
+    tbody tr:nth-child(even):not(.row-hot):not(.row-good) { background: #16161e; }
+    tr.row-good { box-shadow: inset 3px 0 0 #7aa2f7; }
+    tr.row-hot { box-shadow: inset 3px 0 0 #9ece6a; background: #1e2030; }
+    td.rationale { max-width: 28rem; line-height: 1.4; }
+    a { color: #7aa2f7; }
+    h2.section { font-size: 1.1rem; margin: 1.5rem 0 0.5rem 0; color: #bb9af7; }
+    tr.row-rejected { opacity: 0.72; }
+    tr.row-rejected td { color: #a9b1d6; }
+    .wrap-findings { overflow-x: auto; max-height: 28rem; overflow-y: auto; margin-bottom: 1.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Meh-Scanner — daily picks</h1>
+  <p class="last-updated">Last updated: <time datetime="2026-04-12T14:55:22Z">2026-04-12 14:55 UTC</time></p>
+  <p class="meta">13 deal(s) · 24 candidates scanned · 31.9s run · <a href="./latest.json">latest.json</a> · <a href="./candidates.json">candidates.json</a> · <a href="./candidates.csv">candidates.csv</a></p>
+  <div class="toolbar">
+    <label>Filter <input type="search" id="filterText" placeholder="Site, niche, rationale…" oninput="applyFilters()" autocomplete="off"/></label>
+    <label>Min score <select id="minScore" onchange="applyFilters()">
+      <option value="0">Any</option>
+      <option value="6" selected>6+</option>
+      <option value="7">7+</option>
+      <option value="8">8+</option>
+    </select></label>
+    <span style="color:#565f89;font-size:0.8rem;">Tip: rows with score ≥7 (blue bar) and ≥8 (green) are highlighted.</span>
+  </div>
+  <table id="deals">
+    <thead>
+      <tr>
+        <th data-type="num" onclick="sortCol(0)">Score</th>
+        <th onclick="sortCol(1)">Site</th>
+        <th onclick="sortCol(2)">Niche</th>
+        <th onclick="sortCol(3)">Price</th>
+        <th onclick="sortCol(4)">Was / MSRP</th>
+        <th onclick="sortCol(5)">Rationale</th>
+        <th>URL</th>
+      </tr>
+    </thead>
+    <tbody>
+<tr class='row-hot' data-score='9'><td>9</td><td>Woot</td><td>Electronics, home, and tools</td><td>—</td><td>—</td><td class='rationale'>Woot is a well-known daily deal site that fits the criteria, with a focus on selling one discounted product per day directly to consumers.</td><td><a href="https://www.woot.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-hot' data-score='9'><td>9</td><td>Jane</td><td>Women&#x27;s fashion and accessories</td><td>$15</td><td>—</td><td class='rationale'>Jane.com is a women&#x27;s boutique daily deals site that meets the criteria for an &#x27;indie one deal a day&#x27; site, with a clear single-item format, strong pricing signals, and a distinct personality.</td><td><a href="https://jane.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='' data-score='6'><td>6</td><td>The Inventory</td><td>Lifestyle and tech gadgets</td><td>$600</td><td>—</td><td class='rationale'>The Inventory appears to be a daily deal site that curates and highlights various discounted products across different categories, with a focus on lifestyle and tech gadgets. While it has the core elements of a &#x27;one deal a day&#x27; site, it lacks the singular focus and distinct personality of a Meh-style site.</td><td><a href="https://theinventory.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-hot' data-score='8'><td>8</td><td>DailySteals</td><td>Daily deals and flash sales for electronics, home goods, and other consumer products</td><td>$46.00</td><td>—</td><td class='rationale'>DailySteals appears to be a legitimate daily deal site focused on selling one discounted product per day directly to consumers, which aligns with the criteria.</td><td><a href="https://www.dailysteals.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-hot' data-score='9'><td>9</td><td>AppSumo</td><td>Software and digital products</td><td>$49</td><td>—</td><td class='rationale'>AppSumo is a well-established daily deal site that focuses on selling discounted software and digital products, which aligns with the specified criteria.</td><td><a href="https://appsumo.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-hot' data-score='8'><td>8</td><td>Drop</td><td>Enthusiast daily deals</td><td>—</td><td>—</td><td class='rationale'>Drop is a daily deals site focused on enthusiast products like audio, keyboards, and EDC gear, with a strong gaming collaboration theme that aligns with the target audience.</td><td><a href="https://drop.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-hot' data-score='8'><td>8</td><td>Camofire</td><td>Hunting and outdoor gear</td><td>—</td><td>—</td><td class='rationale'>Camofire appears to be a US-based daily deal site focused on hunting and outdoor gear, which aligns with the desired criteria.</td><td><a href="https://www.camofire.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-hot' data-score='9'><td>9</td><td>BJJHQ</td><td>Brazilian Jiu-Jitsu gear</td><td>$5</td><td>—</td><td class='rationale'>BJJHQ is a US-based website that sells one discounted Brazilian Jiu-Jitsu gear item per day, meeting the key criteria for a &#x27;one deal a day&#x27; site.</td><td><a href="https://www.bjjhq.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-hot' data-score='8'><td>8</td><td>1Sale</td><td>Daily deals and discounts</td><td>$ 9.99</td><td>—</td><td class='rationale'>1Sale is a daily deals website that meets the criteria for an &#x27;indie one deal a day&#x27; site, with a clear focus on selling a single discounted product each day directly to consumers.</td><td><a href="https://www.1sale.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-hot' data-score='8'><td>8</td><td>Tanga</td><td>Meh-style daily deals</td><td>$29.99</td><td>$49.99</td><td class='rationale'>Tanga is a US-based daily deals website that primarily sells one discounted product per day directly to consumers, meeting the key criteria for consideration.</td><td><a href="https://www.tanga.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-hot' data-score='8'><td>8</td><td>UntilGone</td><td>Meh-style one-deal-a-day</td><td>$69.99</td><td>—</td><td class='rationale'>UntilGone.com appears to be a legitimate daily deal site focused on selling one discounted product per day directly to consumers, which matches the criteria.</td><td><a href="https://www.untilgone.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-hot' data-score='8'><td>8</td><td>SideDeal</td><td>Daily deals / one-item-per-day e-commerce</td><td>$ 8</td><td>$50</td><td class='rationale'>SideDeal appears to be a daily deal site that meets the criteria, with a single discounted product offered each day, direct-to-consumer sales, and a Meh-style vibe.</td><td><a href="https://sidedeal.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-hot' data-score='9'><td>9</td><td>Meh</td><td>Meh-style daily deals</td><td>$ 29</td><td>$80</td><td class='rationale'>Meh.com is a US-based, independently operated website that primarily sells one discounted product per day directly to consumers, matching the criteria for the &#x27;one deal a day&#x27; / Meh-style site.</td><td><a href="https://meh.com" target="_blank" rel="noopener">link</a></td></tr>
+    </tbody>
+  </table>
+
+  <h2 class="section">All analyzed URLs (accepted and rejected)</h2>
+  <p class="meta" style="margin-bottom:0.5rem;">24 finding(s) · full data in <a href="./candidates.json">candidates.json</a></p>
+  <div class="wrap-findings">
+  <table id="findings">
+    <thead>
+      <tr>
+        <th>Vibe</th>
+        <th>Q</th>
+        <th>Site</th>
+        <th>Niche</th>
+        <th>OK</th>
+        <th>Reason</th>
+        <th>Rationale</th>
+        <th>URL</th>
+      </tr>
+    </thead>
+    <tbody>
+<tr class='row-rejected'><td>7</td><td>3</td><td>StackSocial</td><td>general tech deals</td><td>no</td><td>score 3 &lt; 6</td><td class='rationale'>StackSocial appears to be a general tech deals site, not a focused &#x27;one deal a day&#x27; format like Meh.</td><td><a href="https://stacksocial.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class=''><td>7</td><td>9</td><td>Woot</td><td>Electronics, home, and tools</td><td>yes</td><td></td><td class='rationale'>Woot is a well-known daily deal site that fits the criteria, with a focus on selling one discounted product per day directly to consumers.</td><td><a href="https://www.woot.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class=''><td>7</td><td>9</td><td>Jane</td><td>Women&#x27;s fashion and accessories</td><td>yes</td><td></td><td class='rationale'>Jane.com is a women&#x27;s boutique daily deals site that meets the criteria for an &#x27;indie one deal a day&#x27; site, with a clear single-item format, strong pricing signals, and a distinct personality.</td><td><a href="https://jane.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-rejected'><td>7</td><td>0</td><td>BestDealsToday</td><td>N/A</td><td>no</td><td>score 0 &lt; 6</td><td class='rationale'>The website BestDealsToday does not appear to be a daily deal site, as it does not have any visible deals, pricing information, or Meh-style copy on the page.</td><td><a href="https://www.bestdealstoday.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class=''><td>7</td><td>6</td><td>The Inventory</td><td>Lifestyle and tech gadgets</td><td>yes</td><td></td><td class='rationale'>The Inventory appears to be a daily deal site that curates and highlights various discounted products across different categories, with a focus on lifestyle and tech gadgets. While it has the core elements of a &#x27;one deal a day&#x27; site, it lacks the singular focus and distinct personality of a Meh-style site.</td><td><a href="https://theinventory.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-rejected'><td>7</td><td>5</td><td>DealNews</td><td>general daily deals</td><td>no</td><td>score 5 &lt; 6</td><td class='rationale'>DealNews is a curated daily deals site that features a variety of discounted products across different categories, but it does not focus solely on a single discounted item per day like a Meh-style site.</td><td><a href="https://dealnews.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class=''><td>7</td><td>8</td><td>DailySteals</td><td>Daily deals and flash sales for electronics, home goods, and other consumer products</td><td>yes</td><td></td><td class='rationale'>DailySteals appears to be a legitimate daily deal site focused on selling one discounted product per day directly to consumers, which aligns with the criteria.</td><td><a href="https://www.dailysteals.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-rejected'><td>7</td><td>3</td><td>Yugster</td><td>Daily deals</td><td>no</td><td>score 3 &lt; 6</td><td class='rationale'>The website Yugster appears to be a daily deal site, but the page scrape did not provide any information about the current deal, pricing, or promotional content, so it&#x27;s unclear if it meets the criteria for a &#x27;one deal a day&#x27; format.</td><td><a href="https://www.yugster.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-rejected'><td>7</td><td>3</td><td>TechBargains</td><td>general tech deals</td><td>no</td><td>score 3 &lt; 6</td><td class='rationale'>TechBargains is a general tech deals site, not a &#x27;one deal a day&#x27; format, and it does not have the Meh-style personality or single-item focus required.</td><td><a href="https://www.techbargains.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class=''><td>7</td><td>9</td><td>AppSumo</td><td>Software and digital products</td><td>yes</td><td></td><td class='rationale'>AppSumo is a well-established daily deal site that focuses on selling discounted software and digital products, which aligns with the specified criteria.</td><td><a href="https://appsumo.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-rejected'><td>7</td><td>5</td><td>Touch of Modern</td><td>general lifestyle deals</td><td>no</td><td>score 5 &lt; 6</td><td class='rationale'>TouchOfModern is a lifestyle daily flash sale site that sells a variety of discounted products, but it does not have the clear single-item format or strong Meh-style personality that the client is looking for.</td><td><a href="https://www.touchofmodern.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-rejected'><td>7</td><td>0</td><td>Steep &amp; Cheap</td><td>Outdoor gear</td><td>no</td><td>score 0 &lt; 6</td><td class='rationale'>The site appears to be a daily deal site for outdoor gear, but the page is currently showing a JavaScript error which prevents the deal details from being displayed.</td><td><a href="https://www.steepandcheap.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class=''><td>7</td><td>8</td><td>Drop</td><td>Enthusiast daily deals</td><td>yes</td><td></td><td class='rationale'>Drop is a daily deals site focused on enthusiast products like audio, keyboards, and EDC gear, with a strong gaming collaboration theme that aligns with the target audience.</td><td><a href="https://drop.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class=''><td>7</td><td>8</td><td>Camofire</td><td>Hunting and outdoor gear</td><td>yes</td><td></td><td class='rationale'>Camofire appears to be a US-based daily deal site focused on hunting and outdoor gear, which aligns with the desired criteria.</td><td><a href="https://www.camofire.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class=''><td>7</td><td>9</td><td>BJJHQ</td><td>Brazilian Jiu-Jitsu gear</td><td>yes</td><td></td><td class='rationale'>BJJHQ is a US-based website that sells one discounted Brazilian Jiu-Jitsu gear item per day, meeting the key criteria for a &#x27;one deal a day&#x27; site.</td><td><a href="https://www.bjjhq.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-rejected'><td>7</td><td>0</td><td>Last Bottle</td><td>Wine deals</td><td>no</td><td>score 0 &lt; 6</td><td class='rationale'>The website LastBottle.com appears to be a single-item daily wine deal site, but the page scrape failed so there is not enough information to evaluate the site&#x27;s quality or personality.</td><td><a href="https://lastbottle.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class=''><td>7</td><td>8</td><td>1Sale</td><td>Daily deals and discounts</td><td>yes</td><td></td><td class='rationale'>1Sale is a daily deals website that meets the criteria for an &#x27;indie one deal a day&#x27; site, with a clear focus on selling a single discounted product each day directly to consumers.</td><td><a href="https://www.1sale.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class=''><td>7</td><td>8</td><td>Tanga</td><td>Meh-style daily deals</td><td>yes</td><td></td><td class='rationale'>Tanga is a US-based daily deals website that primarily sells one discounted product per day directly to consumers, meeting the key criteria for consideration.</td><td><a href="https://www.tanga.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-rejected'><td>7</td><td>0</td><td>That Daily Deal</td><td>N/A</td><td>no</td><td>score 0 &lt; 6</td><td class='rationale'>The website failed to load, so there is no information available to evaluate it as a potential daily deal site.</td><td><a href="https://www.thatdailydeal.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class=''><td>7</td><td>8</td><td>UntilGone</td><td>Meh-style one-deal-a-day</td><td>yes</td><td></td><td class='rationale'>UntilGone.com appears to be a legitimate daily deal site focused on selling one discounted product per day directly to consumers, which matches the criteria.</td><td><a href="https://www.untilgone.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class=''><td>7</td><td>8</td><td>SideDeal</td><td>Daily deals / one-item-per-day e-commerce</td><td>yes</td><td></td><td class='rationale'>SideDeal appears to be a daily deal site that meets the criteria, with a single discounted product offered each day, direct-to-consumer sales, and a Meh-style vibe.</td><td><a href="https://sidedeal.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class=''><td>7</td><td>9</td><td>Meh</td><td>Meh-style daily deals</td><td>yes</td><td></td><td class='rationale'>Meh.com is a US-based, independently operated website that primarily sells one discounted product per day directly to consumers, matching the criteria for the &#x27;one deal a day&#x27; / Meh-style site.</td><td><a href="https://meh.com" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-rejected'><td>4</td><td>3</td><td>Daily Markdown | Gear on Sale at L.L.Bean</td><td>Retail</td><td>no</td><td>score 3 &lt; 6</td><td class='rationale'>This appears to be a single-item daily deal site run by L.L.Bean, a major US retailer, which does not meet the criteria for an independent &#x27;Meh-style&#x27; deal site.</td><td><a href="https://www.llbean.com/llb/shop/510312?bc=32&amp;csp=a?feat=pet%20placemat-srrrtop&amp;nav=pg2-510312&amp;page=clearance&amp;sort_field=Relevance&amp;start=49&amp;viewCount=48" target="_blank" rel="noopener">link</a></td></tr>
+<tr class='row-rejected'><td>4</td><td>0</td><td>How to Save a Deal a Day….Every Day! | Digital Dealer</td><td>N/A</td><td>no</td><td>score 0 &lt; 6</td><td class='rationale'>This article is about strategies for saving deals, not an actual deal site itself, so it does not meet the criteria for a &#x27;one deal a day&#x27; site.</td><td><a href="https://digitaldealer.com/news/how-to-save-a-deal-a-day-every-day/33115/" target="_blank" rel="noopener">link</a></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <script>
+    function sortCol(col) {
+      const table = document.getElementById('deals');
+      if (!table || !table.tBodies[0]) return;
+      const tbody = table.tBodies[0];
+      const th = table.tHead.rows[0].cells[col];
+      const type = th.dataset.type || 'str';
+      const asc = th.asc = !th.asc;
+      const rows = Array.from(tbody.rows).filter(r => r.cells.length > 1);
+      rows.sort((a, b) => {
+        let va = a.cells[col].innerText.trim();
+        let vb = b.cells[col].innerText.trim();
+        if (type === 'num') { va = parseFloat(va) || 0; vb = parseFloat(vb) || 0; return asc ? va - vb : vb - va; }
+        return asc ? va.localeCompare(vb) : vb.localeCompare(va);
+      });
+      rows.forEach(r => tbody.appendChild(r));
+      applyFilters();
+    }
+    function applyFilters() {
+      const ft = document.getElementById('filterText');
+      const ms = document.getElementById('minScore');
+      const tbody = document.querySelector('#deals tbody');
+      if (!tbody) return;
+      const q = (ft && ft.value || '').toLowerCase().trim();
+      const minScore = ms ? (parseInt(ms.value, 10) || 0) : 0;
+      [...tbody.rows].forEach(r => {
+        if (r.cells.length < 7) { r.style.display = ''; return; }
+        const score = parseInt(r.cells[0].innerText, 10) || 0;
+        const hay = r.innerText.toLowerCase();
+        const ok = score >= minScore && (q === '' || hay.includes(q));
+        r.style.display = ok ? '' : 'none';
+      });
+    }
+    applyFilters();
+  </script>
+</body>
+</html>
