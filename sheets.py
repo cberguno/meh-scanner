@@ -19,7 +19,7 @@ from logger import logger
 
 SCOPES    = ["https://www.googleapis.com/auth/spreadsheets"]
 SHEET_TAB = "Deals"
-HEADERS   = ["Site", "URL", "Niche", "Score", "Price", "Was", "Est. ROI %", "Rationale", "Scanned At"]
+HEADERS   = ["Site", "URL", "Niche", "Score", "Price", "Was", "Rationale", "Scanned At"]
 
 
 def _load_credentials():
@@ -115,7 +115,6 @@ def append_deals(deals: list[dict]) -> bool:
             payload.append(HEADERS)
 
         for d in new_deals:
-            roi = f"{d['roi_pct']}%" if d.get("roi_pct") is not None else ""
             payload.append([
                 d.get("site_name",      ""),
                 d.get("url",            ""),
@@ -123,7 +122,6 @@ def append_deals(deals: list[dict]) -> bool:
                 d.get("quality_score",  ""),
                 d.get("deal_price",     ""),
                 d.get("original_price", ""),
-                roi,
                 d.get("rationale",      ""),
                 now,
             ])
@@ -131,7 +129,7 @@ def append_deals(deals: list[dict]) -> bool:
         # ── Append to sheet ───────────────────────────────────────────────────
         sheet.append(
             spreadsheetId=Config.GOOGLE_SHEET_ID,
-            range=f"{SHEET_TAB}!A:I",
+            range=f"{SHEET_TAB}!A:H",
             valueInputOption="RAW",
             insertDataOption="INSERT_ROWS",
             body={"values": payload},
