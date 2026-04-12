@@ -74,7 +74,7 @@ Once `GOOGLE_SHEET_ID` is configured (see [Setup](#setup)), the spreadsheet is p
 ### Install
 
 ```bash
-pip install -r requirements.txt
+py -m pip install -r requirements.txt
 playwright install
 ```
 
@@ -101,7 +101,7 @@ cp .env.example .env
 4. Run the one-time setup to create the spreadsheet:
 
 ```bash
-python setup_sheets.py
+py setup_sheets.py
 ```
 
 5. Copy the printed spreadsheet URL and add it to this README (see [Admin instructions](#admin-how-to-publish-the-spreadsheet-link) above).
@@ -109,7 +109,7 @@ python setup_sheets.py
 ### Run
 
 ```bash
-python main.py
+py main.py
 ```
 
 ---
