@@ -239,6 +239,29 @@ def get_deal_history(days: int = 7) -> list[dict]:
             con.close()
 
 
+def get_all_deals() -> list[dict]:
+    """
+    Return every deal ever archived, oldest first.
+    Used by export_history.py to publish the full scan history to Google Sheets.
+    Each row includes the scan_run timestamp so the export can show when the
+    parent run occurred even if archived_at differs slightly.
+    """
+    with _LOCK:
+        con = _conn()
+        try:
+            rows = con.execute(
+                """SELECT d.id, d.site_name, d.url, d.rationale, d.niche,
+                          d.quality_score, d.deal_price, d.original_price,
+                          d.archived_at, sr.timestamp AS scan_timestamp
+                   FROM deals d
+                   JOIN scan_runs sr ON sr.id = d.scan_run_id
+                   ORDER BY d.archived_at ASC""",
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            con.close()
+
+
 # ── source quality scoring ────────────────────────────────────────────────────
 
 def _extract_domain(url: str) -> str:
