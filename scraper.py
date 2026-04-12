@@ -1,4 +1,5 @@
 import hashlib
+import json
 import random
 import re
 import time
@@ -6,6 +7,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -663,6 +665,71 @@ def _a11y_collect_hints(snapshot: dict | None) -> list[str]:
     return hints[:10]
 
 
+def _is_root_url(url: str) -> bool:
+    """Return True if the URL is a root/home page (no meaningful path beyond '/')."""
+    try:
+        path = urlparse(url).path
+        return path in ("", "/")
+    except Exception:
+        return False
+
+
+def _extract_canonical_product_url(soup: BeautifulSoup, crawl_url: str) -> str:
+    """
+    Extract the canonical product URL from a page, preferring structured data.
+
+    Priority:
+      1. JSON-LD schema.org Product.url or Product.offers[].url
+      2. <link rel="canonical"> (only when it points to a non-root path)
+      3. Microdata itemprop="url" (only when it points to a non-root path)
+      4. Empty string — caller falls back to the crawl URL with a warning
+    """
+    # 1. JSON-LD: schema.org Product
+    for tag in soup.find_all("script", type="application/ld+json"):
+        try:
+            data = json.loads(tag.string or "")
+        except Exception:
+            continue
+        items: list = []
+        if isinstance(data, list):
+            items = data
+        elif isinstance(data, dict):
+            items = data.get("@graph", [data])
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            t = item.get("@type", "")
+            if isinstance(t, list):
+                t = t[0] if t else ""
+            if "Product" not in str(t):
+                continue
+            if item.get("url"):
+                return item["url"]
+            offers = item.get("offers")
+            if isinstance(offers, dict) and offers.get("url"):
+                return offers["url"]
+            if isinstance(offers, list):
+                for offer in offers:
+                    if isinstance(offer, dict) and offer.get("url"):
+                        return offer["url"]
+
+    # 2. <link rel="canonical">
+    canonical = soup.find("link", rel="canonical")
+    if canonical:
+        href = (canonical.get("href") or "").strip()
+        if href and not _is_root_url(href):
+            return href
+
+    # 3. Microdata itemprop="url"
+    url_el = soup.find(itemprop="url")
+    if url_el:
+        href = (url_el.get("href") or url_el.get("content") or "").strip()
+        if href and not _is_root_url(href):
+            return href
+
+    return ""
+
+
 def _extract_from_soup(soup: BeautifulSoup, url: str) -> dict:
     title = ""
     og = soup.find("meta", property="og:title")
@@ -729,12 +796,30 @@ def _extract_from_soup(soup: BeautifulSoup, url: str) -> dict:
         promo = re.sub(r"\s+", " ", main_clean.get_text(" ", strip=True))[:2000]
 
     signals = _collect_meh_signals(f"{title} {promo} {price}")
+
+    product_url = _extract_canonical_product_url(soup, url)
+    if not product_url:
+        product_url = url
+        if _is_root_url(url):
+            logger.warning(
+                "product_url_fallback_homepage",
+                message="No canonical product URL found; falling back to root URL — check this page",
+                url=url,
+            )
+        else:
+            logger.debug(
+                "product_url_fallback_crawl",
+                message="No canonical product URL found in structured data; using crawl URL",
+                url=url,
+            )
+
     return {
         "deal_title":     title,
         "deal_price":     price,
         "original_price": original_price,
         "promo_copy":     promo,
         "meh_signals":    signals,
+        "product_url":    product_url,
     }
 
 
@@ -804,7 +889,9 @@ def _extract_from_playwright_page(page, url: str) -> dict:
 
     html = page.content()
     soup = BeautifulSoup(html, "html.parser")
-    parsed = _extract_from_soup(soup, url)
+    # Use the final browser URL (after any redirects) as the canonical fallback URL
+    final_url = page.url or url
+    parsed = _extract_from_soup(soup, final_url)
     if deal_title:
         parsed["deal_title"] = deal_title
 
@@ -860,7 +947,9 @@ def scrape_deal_page_requests(url: str) -> dict:
         resp = requests.get(url, headers=headers, timeout=20)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
-        data = _extract_from_soup(soup, url)
+        # Use the final response URL (after redirects) as the canonical fallback
+        final_url = resp.url or url
+        data = _extract_from_soup(soup, final_url)
         data["screenshot_path"] = ""
         data["scrape_method"] = "requests"
         data["scrape_error"] = ""
@@ -873,6 +962,7 @@ def scrape_deal_page_requests(url: str) -> dict:
             "deal_price": "",
             "promo_copy": "",
             "meh_signals": "",
+            "product_url": url,
             "screenshot_path": "",
             "scrape_method": "failed",
             "scrape_error": str(e),
@@ -943,6 +1033,7 @@ def enrich_candidates(sites: list[dict]) -> list[dict]:
                             "deal_price": "",
                             "promo_copy": "",
                             "meh_signals": "",
+                            "product_url": "",
                             "screenshot_path": "",
                             "scrape_method": "skipped",
                             "scrape_error": "missing link",
@@ -986,6 +1077,7 @@ def enrich_candidates(sites: list[dict]) -> list[dict]:
                     "deal_price": "",
                     "promo_copy": "",
                     "meh_signals": "",
+                    "product_url": "",
                     "screenshot_path": "",
                     "scrape_method": "skipped",
                     "scrape_error": "missing link",

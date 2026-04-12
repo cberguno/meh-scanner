@@ -42,6 +42,7 @@ def make_fake_playwright_module(html):
     class FakePage:
         def __init__(self, html):
             self._html = html
+            self.url = "https://fake.example/deal"
             self.viewport_size = {"width": 1280, "height": 720}
             self.mouse = FakeMouse()
             self.accessibility = FakeAccessibility()

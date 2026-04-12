@@ -283,3 +283,155 @@ def test_search_keeps_rejection_samples_in_diagnostics(monkeypatch: pytest.Monke
     diagnostics = scraper.get_last_search_diagnostics()
     assert diagnostics["rejection_samples"]
     assert diagnostics["rejection_samples"][0]["reason"] == "low_vibe"
+
+
+# ── Canonical product URL extraction tests ───────────────────────────────────
+
+from bs4 import BeautifulSoup
+
+
+def _make_soup(html: str) -> BeautifulSoup:
+    return BeautifulSoup(html, "html.parser")
+
+
+def test_extract_canonical_url_from_jsonld_product_url():
+    html = """<html><head>
+    <script type="application/ld+json">
+    {"@context":"https://schema.org","@type":"Product","url":"https://example.com/products/widget-pro","name":"Widget Pro"}
+    </script></head><body></body></html>"""
+    soup = _make_soup(html)
+    result = scraper._extract_canonical_product_url(soup, "https://example.com/")
+    assert result == "https://example.com/products/widget-pro"
+
+
+def test_extract_canonical_url_from_jsonld_offers_url():
+    html = """<html><head>
+    <script type="application/ld+json">
+    {"@context":"https://schema.org","@type":"Product","name":"Gizmo",
+     "offers":{"@type":"Offer","url":"https://example.com/products/gizmo","price":"9.99"}}
+    </script></head><body></body></html>"""
+    soup = _make_soup(html)
+    result = scraper._extract_canonical_product_url(soup, "https://example.com/")
+    assert result == "https://example.com/products/gizmo"
+
+
+def test_extract_canonical_url_from_jsonld_offers_list():
+    html = """<html><head>
+    <script type="application/ld+json">
+    {"@context":"https://schema.org","@type":"Product","name":"Gadget",
+     "offers":[{"@type":"Offer","url":"https://shop.example.com/gadget","price":"19.99"}]}
+    </script></head><body></body></html>"""
+    soup = _make_soup(html)
+    result = scraper._extract_canonical_product_url(soup, "https://example.com/")
+    assert result == "https://shop.example.com/gadget"
+
+
+def test_extract_canonical_url_from_jsonld_graph():
+    html = """<html><head>
+    <script type="application/ld+json">
+    {"@context":"https://schema.org","@graph":[
+      {"@type":"WebSite","name":"Shop"},
+      {"@type":"Product","url":"https://example.com/p/item-42","name":"Item 42"}
+    ]}
+    </script></head><body></body></html>"""
+    soup = _make_soup(html)
+    result = scraper._extract_canonical_product_url(soup, "https://example.com/")
+    assert result == "https://example.com/p/item-42"
+
+
+def test_extract_canonical_url_from_canonical_tag():
+    html = """<html><head>
+    <link rel="canonical" href="https://example.com/products/blue-widget"/>
+    </head><body></body></html>"""
+    soup = _make_soup(html)
+    result = scraper._extract_canonical_product_url(soup, "https://example.com/")
+    assert result == "https://example.com/products/blue-widget"
+
+
+def test_extract_canonical_url_from_microdata():
+    html = """<html><body>
+    <div itemscope itemtype="https://schema.org/Product">
+      <link itemprop="url" href="https://example.com/item/microdata-product"/>
+    </div>
+    </body></html>"""
+    soup = _make_soup(html)
+    result = scraper._extract_canonical_product_url(soup, "https://example.com/")
+    assert result == "https://example.com/item/microdata-product"
+
+
+def test_extract_canonical_url_skips_root_canonical():
+    """A canonical tag pointing to the homepage should not be used."""
+    html = """<html><head>
+    <link rel="canonical" href="https://example.com/"/>
+    </head><body></body></html>"""
+    soup = _make_soup(html)
+    result = scraper._extract_canonical_product_url(soup, "https://example.com/")
+    assert result == ""
+
+
+def test_extract_canonical_url_prefers_jsonld_over_canonical_tag():
+    """JSON-LD product URL takes precedence over the canonical tag."""
+    html = """<html><head>
+    <link rel="canonical" href="https://example.com/products/fallback"/>
+    <script type="application/ld+json">
+    {"@context":"https://schema.org","@type":"Product","url":"https://example.com/products/preferred","name":"Best"}
+    </script></head><body></body></html>"""
+    soup = _make_soup(html)
+    result = scraper._extract_canonical_product_url(soup, "https://example.com/")
+    assert result == "https://example.com/products/preferred"
+
+
+def test_extract_canonical_url_returns_empty_when_nothing_found():
+    """With no structured data at all, return empty string so caller can warn."""
+    html = "<html><head></head><body><h1>Some page</h1></body></html>"
+    soup = _make_soup(html)
+    result = scraper._extract_canonical_product_url(soup, "https://example.com/some-page")
+    assert result == ""
+
+
+def test_extract_from_soup_uses_product_url_from_jsonld(monkeypatch):
+    """_extract_from_soup should populate product_url from JSON-LD."""
+    html = """<html><head>
+    <script type="application/ld+json">
+    {"@context":"https://schema.org","@type":"Product","url":"https://example.com/p/fancy-item","name":"Fancy Item"}
+    </script></head><body><h1>Fancy Item</h1></body></html>"""
+    soup = _make_soup(html)
+    data = scraper._extract_from_soup(soup, "https://example.com/")
+    assert data["product_url"] == "https://example.com/p/fancy-item"
+
+
+def test_extract_from_soup_falls_back_to_crawl_url_without_warning_for_non_root(monkeypatch):
+    """When no structured URL is found and crawl URL has a path, use crawl URL (no home-page warning)."""
+    warnings = []
+    monkeypatch.setattr(
+        scraper.logger,
+        "warning",
+        lambda event, *args, **kwargs: warnings.append(event),
+    )
+    html = "<html><head></head><body><h1>Deal</h1></body></html>"
+    soup = _make_soup(html)
+    data = scraper._extract_from_soup(soup, "https://example.com/deals/todays-deal")
+    assert data["product_url"] == "https://example.com/deals/todays-deal"
+    assert "product_url_fallback_homepage" not in warnings
+
+
+def test_extract_from_soup_warns_when_crawl_url_is_homepage(monkeypatch):
+    """When no structured URL is found and crawl URL is a homepage, a warning is logged."""
+    warnings = []
+    monkeypatch.setattr(
+        scraper.logger,
+        "warning",
+        lambda event, *args, **kwargs: warnings.append(event),
+    )
+    html = "<html><head></head><body><h1>Deal</h1></body></html>"
+    soup = _make_soup(html)
+    data = scraper._extract_from_soup(soup, "https://example.com/")
+    assert data["product_url"] == "https://example.com/"
+    assert "product_url_fallback_homepage" in warnings
+
+
+def test_is_root_url():
+    assert scraper._is_root_url("https://example.com/") is True
+    assert scraper._is_root_url("https://example.com") is True
+    assert scraper._is_root_url("https://example.com/products/item") is False
+    assert scraper._is_root_url("https://example.com/p/42") is False
