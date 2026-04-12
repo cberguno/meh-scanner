@@ -158,6 +158,7 @@ _BLOCKED_DOMAINS = frozenset({
     "9to5mac.com",
     "9to5google.com",
     "androidpolice.com",
+    "gamesindustry.biz",
 })
 
 
