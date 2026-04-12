@@ -1,4 +1,5 @@
 import hashlib
+import json
 import random
 import re
 import time
@@ -664,6 +665,31 @@ def _a11y_collect_hints(snapshot: dict | None) -> list[str]:
     return hints[:10]
 
 
+def _price_from_ld_item(item: dict) -> str:
+    """Extract a price string from a JSON-LD Product or Offer dict."""
+    # Direct price on the item (common on Offer nodes)
+    for key in ("price", "lowPrice"):
+        val = item.get(key)
+        if val is not None:
+            val = str(val).strip()
+            if re.search(r"[0-9]", val):
+                return val
+    # Recurse into nested offers / offers list
+    for field in ("offers", "Offers"):
+        child = item.get(field)
+        if isinstance(child, dict):
+            result = _price_from_ld_item(child)
+            if result:
+                return result
+        elif isinstance(child, list):
+            for c in child:
+                if isinstance(c, dict):
+                    result = _price_from_ld_item(c)
+                    if result:
+                        return result
+    return ""
+
+
 def _extract_from_soup(soup: BeautifulSoup, url: str) -> dict:
     title = ""
     og = soup.find("meta", property="og:title")
@@ -684,6 +710,40 @@ def _extract_from_soup(soup: BeautifulSoup, url: str) -> dict:
         m = re.search(r"\$\s*[0-9][0-9,]*(?:\.[0-9]{2})?", soup.get_text(" ", strip=True))
         if m:
             price = m.group(0).strip()
+
+    # ── Fallback 1: JSON-LD structured data (Product / Offer) ──────────────
+    if not price:
+        for script_tag in soup.find_all("script", type="application/ld+json"):
+            try:
+                ld = json.loads(script_tag.string or "")
+            except (json.JSONDecodeError, TypeError):
+                continue
+            items = ld if isinstance(ld, list) else [ld]
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                price = _price_from_ld_item(item)
+                if price:
+                    break
+            if price:
+                break
+
+    # ── Fallback 2: OpenGraph / product meta tags ──────────────────────────
+    if not price:
+        for prop in ("og:price:amount", "product:price:amount", "product:price"):
+            tag = soup.find("meta", property=prop)
+            if tag and tag.get("content", "").strip():
+                price = tag["content"].strip()
+                break
+
+    # ── Fallback 3: elements with "price" in class name ────────────────────
+    if not price:
+        for el in soup.find_all(class_=re.compile(r"price", re.I)):
+            t = el.get_text(strip=True)
+            m = re.search(r"\$\s*[0-9][0-9,]*(?:\.[0-9]{2})?", t)
+            if m:
+                price = m.group(0).strip()
+                break
 
     # ── Fix 2: original_price — strikethrough / compare-at patterns ──────────
     original_price = ""
