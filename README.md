@@ -102,7 +102,7 @@ Meh-Scanner uses a **Google Service Account** (no user interaction needed, works
 
 ### Step 3 — Create the Spreadsheet and share it
 
-1. Create a new Google Sheet at <https://sheets.new>.
+1. Create a new Google Sheet at https://sheets.new.
 2. Copy the **spreadsheet ID** from the URL:
    ```
    https://docs.google.com/spreadsheets/d/<SPREADSHEET_ID>/edit
