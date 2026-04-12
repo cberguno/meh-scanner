@@ -195,6 +195,10 @@ _BLOCKED_DOMAINS = frozenset({
     "pgmusic.com",
     "catalog.watrend.com",
     "steamcommunity.com",
+    # Large retailers / review sites misidentified as daily-deal sites
+    "jomashop.com",
+    "massdrop.com",
+    "gearhungry.com",
     # Coupon aggregators / cashback / deal communities (not one-deal-a-day sites)
     "slickdeals.net",
     "bradsdeals.com",
