@@ -730,6 +730,51 @@ def _extract_from_soup(soup: BeautifulSoup, url: str) -> dict:
         if m:
             price = m.group(0).strip()
 
+    # ── Fallback: class-name patterns containing price/cost/amount ─────────
+    if not price:
+        for css in (
+            "[class*='price']",
+            "[class*='cost']",
+            "[class*='amount']",
+        ):
+            el = soup.select_one(css)
+            if el:
+                t = el.get_text(strip=True)
+                pm = re.search(r"[\$£€]?\s*[0-9][0-9,]*(?:\.[0-9]{2})?", t)
+                if pm:
+                    price = pm.group(0).strip()
+                    break
+
+    # ── Fallback: JSON-LD structured data ──────────────────────────────────
+    if not price:
+        import json as _json
+        for script in soup.find_all("script", type="application/ld+json"):
+            try:
+                ld = _json.loads(script.string or "")
+                items = ld if isinstance(ld, list) else [ld]
+                for item in items:
+                    offers = item.get("offers") or item.get("Offers") or {}
+                    if isinstance(offers, list):
+                        offers = offers[0] if offers else {}
+                    p = offers.get("price") or offers.get("Price") or ""
+                    if p:
+                        price = f"${p}" if not str(p).startswith(("$", "£", "€")) else str(p)
+                        break
+                if price:
+                    break
+            except (ValueError, TypeError, AttributeError):
+                continue
+
+    # ── Fallback: OpenGraph / product meta tags ────────────────────────────
+    if not price:
+        for prop in ("og:price:amount", "product:price:amount"):
+            meta = soup.find("meta", property=prop)
+            if meta and meta.get("content"):
+                val = meta["content"].strip()
+                if re.search(r"[0-9]", val):
+                    price = f"${val}" if not val.startswith(("$", "£", "€")) else val
+                    break
+
     # ── Fix 2: original_price — strikethrough / compare-at patterns ──────────
     original_price = ""
     # Prefer semantic strikethrough tags that sites use for "was" prices
