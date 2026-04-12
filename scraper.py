@@ -186,6 +186,15 @@ _BLOCKED_DOMAINS = frozenset({
     "9to5mac.com",
     "9to5google.com",
     "androidpolice.com",
+    # News, forums, and article sites confirmed as false positives in live scans
+    "gamesindustry.biz",
+    "today.com",
+    "geargods.net",
+    "cpg.golf",
+    "pistonheads.com",
+    "pgmusic.com",
+    "catalog.watrend.com",
+    "steamcommunity.com",
 })
 
 
