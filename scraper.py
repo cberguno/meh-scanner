@@ -5,6 +5,7 @@ import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
@@ -55,55 +56,82 @@ SERPER_RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 _LAST_SEARCH_DIAGNOSTICS: dict = {}
 
 def score_meh_vibe(title, snippet):
-    """Cheap heuristic scoring for 'Meh vibe' before Playwright visit"""
+    """Cheap heuristic scoring for 'Meh vibe' before Playwright visit.
+
+    Three-tier keyword system:
+      +3  strong phrases unique to daily-deal sites
+      +1  moderate keywords common in deal-site copy
+      +0.5 weak generic shopping words
+    Domain-name bonus only for known daily-deal brand names.
+    Hard negatives (-3) and medium negatives (-2) for aggregators/listicles.
+    """
     score = 0
     text = f"{title} {snippet}".lower()
-    
-    # Positive indicators (Meh-like)
-    positive_keywords = [
-        'deal', 'sale', 'daily', 'one', 'single', 'limited', 'flash',
-        'exclusive', 'offer', 'discount', 'bargain', 'steal', 'score',
-        'witty', 'fun', 'cynical', 'sarcastic', 'humor', 'joke',
-        'drops',  # limited-release deal mechanic used by drop.com and similar
+
+    # ── Strong phrases (+3) — unique to one-deal-a-day sites ─────────────
+    strong_phrases = [
+        "one deal a day", "one deal at a time", "one sale a day",
+        "deal of the day", "new deal every day", "new deal daily",
+        "today only deal", "expires at midnight", "expires tonight",
+        "until gone", "until sold out", "one item per day",
+        "single item sale", "daily deal site",
     ]
-    
-    # Negative indicators (aggregators/marketplaces)
-    # Note: 'woot' removed — woot.com is a legitimate meh-style deal site.
-    negative_keywords = [
-        'groupon', 'slickdeals', 'amazon', 'ebay', 'aliexpress',
-        'temu', 'walmart', 'target', 'best buy', 'coupons', 'thousands',
-        'million', 'marketplace', 'storefront', 'shopify', 'etsy',
-        # Coupon/promo-code aggregators (e.g. 1sale.com) use these exact phrases
-        'coupon codes', 'promo codes',
-        # Geographic / catalog false positives
-        'india', 'flipkart', 'myntra', 'snapdeal',
-        # Multi-product catalog indicators (not one-item-per-day)
-        'all deals', 'hundreds of deals', 'thousands of deals',
-        'retailer of', 'supplier of', 'manufacturer of', 'wholesaler',
-        'get upto', 'get up to',
-        # Article/listicle indicators — sites writing ABOUT deal sites, not being one
-        'best deal sites', 'top deal sites', 'sites that', 'these sites',
-        'best websites', 'top websites', 'list of sites', 'deal sites that',
-        'daily deal sites', 'one deal a day sites',
+    for phrase in strong_phrases:
+        if phrase in text:
+            score += 3
+
+    # ── Moderate keywords (+1) ───────────────────────────────────────────
+    moderate_keywords = [
+        "daily deal", "flash sale", "today only", "limited time",
+        "one deal", "one sale", "meh", "woot", "sarcastic", "witty",
+        "snark",
     ]
-    
-    for keyword in positive_keywords:
-        if keyword in text:
+    for kw in moderate_keywords:
+        if kw in text:
             score += 1
-    
-    for keyword in negative_keywords:
-        if keyword in text:
-            score -= 2
-    
-    # Increased bonus for domain patterns
-    if re.search(r'(deal|sale|meh|daily|steal|score)', title.lower()):
+
+    # ── Weak generic shopping words (+0.5) ───────────────────────────────
+    weak_keywords = [
+        "deal", "sale", "discount", "bargain", "offer", "exclusive",
+        "steal", "score", "drops",
+    ]
+    for kw in weak_keywords:
+        if kw in text:
+            score += 0.5
+
+    # ── Domain-name bonus (+2) — daily-deal brand names only ─────────────
+    if re.search(
+        r'(meh|dailydeal|daily-deal|onesale|1sale|thatdailydeal'
+        r'|untilgone|sidedeal|yugster|13deals)',
+        title.lower(),
+    ):
         score += 2
-    
-    # Small penalty for generic Shopify/Etsy-style domains
-    if re.search(r'(myshopify\.com|etsy\.com|shopify\.com)', text):
-        score -= 1
-    
-    return max(0, min(10, score))  # Clamp to 0-10
+
+    # ── Hard negatives (-3) — big-box / aggregator / catalog ─────────────
+    hard_negatives = [
+        "amazon", "ebay", "walmart", "target", "best buy", "aliexpress",
+        "temu", "groupon", "slickdeals", "marketplace", "shopify", "etsy",
+        "flipkart", "myntra", "snapdeal", "india",
+        "thousands of deals", "hundreds of deals", "all deals",
+        "retailer of", "supplier of", "manufacturer of", "wholesaler",
+    ]
+    for neg in hard_negatives:
+        if neg in text:
+            score -= 3
+
+    # ── Medium negatives (-2) — coupon/listicle indicators ───────────────
+    medium_negatives = [
+        "coupon codes", "promo codes", "coupons",
+        "best deal sites", "top deal sites", "sites that",
+        "best websites", "top websites", "list of sites",
+        "deal sites that", "daily deal sites", "one deal a day sites",
+        "get up to", "get upto",
+    ]
+    for neg in medium_negatives:
+        if neg in text:
+            score -= 2
+
+    return max(0, min(10, int(round(score))))
 
 # Domains that consistently return false positives: social platforms, review
 # aggregators, tutorial blogs, plugin directories, and messaging apps.
@@ -161,10 +189,19 @@ _BLOCKED_DOMAINS = frozenset({
 })
 
 
+def _extract_registrable_domain(url: str) -> str:
+    """Extract the registrable domain from a URL for same-domain checks."""
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    host = urlparse(url).netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
 def _is_blocked_domain(url: str) -> bool:
     """Return True if the URL's registrable domain is in _BLOCKED_DOMAINS."""
     try:
-        from urllib.parse import urlparse
         # urlparse requires a scheme to populate netloc correctly
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
