@@ -1,17 +1,17 @@
 site_name,url,snippet,discovery_source,source_status,vibe_score,deal_title,deal_price,original_price,meh_signals,meh_signal_hits,scrape_method,quality_score,niche,rationale,accepted,rejection_reason
-Yugster,https://www.yugster.com,Electronics gadget daily deal,seed,new,7,,,,,0,failed,,,,no,analysis parse error
-Drop,https://drop.com,Enthusiast daily deals audio keyboards EDC,seed,new,7,,,,,0,failed,,,,no,analysis parse error
 AppSumo,https://appsumo.com,Software deals today only limited,seed,new,7,,,,,0,failed,,,,no,analysis parse error
 Last Bottle,https://lastbottle.com,Single wine deal per day until gone,seed,new,7,,,,,0,failed,,,,no,analysis parse error
-Steep & Cheap,https://www.steepandcheap.com,Outdoor gear flash deal daily,seed,new,7,,,,,0,failed,,,,no,analysis parse error
-Jane,https://jane.com,Women boutique daily deals,seed,new,7,,,,,0,failed,,,,no,analysis parse error
-Touch of Modern,https://www.touchofmodern.com,Men lifestyle daily flash sale,seed,new,7,,,,,0,failed,,,,no,analysis parse error
-Woot,https://www.woot.com,Daily deals electronics home tools,seed,new,7,,,,,0,failed,,,,no,analysis parse error
 BJJHQ,https://www.bjjhq.com,One BJJ gear deal a day,seed,new,7,,,,,0,failed,,,,no,analysis parse error
+Jane,https://jane.com,Women boutique daily deals,seed,new,7,,,,,0,failed,,,,no,analysis parse error
+Steep & Cheap,https://www.steepandcheap.com,Outdoor gear flash deal daily,seed,new,7,,,,,0,failed,,,,no,analysis parse error
+Yugster,https://www.yugster.com,Electronics gadget daily deal,seed,new,7,,,,,0,failed,,,,no,analysis parse error
+Drop,https://drop.com,Enthusiast daily deals audio keyboards EDC,seed,new,7,,,,,0,failed,,,,no,analysis parse error
+Woot,https://www.woot.com,Daily deals electronics home tools,seed,new,7,,,,,0,failed,,,,no,analysis parse error
 Camofire,https://www.camofire.com,Hunting outdoor daily deal one at a time,seed,new,7,,,,,0,failed,,,,no,analysis parse error
+Touch of Modern,https://www.touchofmodern.com,Men lifestyle daily flash sale,seed,new,7,,,,,0,failed,,,,no,analysis parse error
 1Sale,https://www.1sale.com,Daily deals flash sale,seed,new,7,,,,,0,failed,,,,no,analysis parse error
+That Daily Deal,https://www.thatdailydeal.com,One deal a day US,seed,new,7,,,,,0,failed,,,,no,analysis parse error
 Tanga,https://www.tanga.com,Deal of the day since 2006,seed,new,7,,,,,0,failed,,,,no,analysis parse error
 UntilGone,https://www.untilgone.com,Limited quantity daily deals,seed,new,7,,,,,0,failed,,,,no,analysis parse error
-That Daily Deal,https://www.thatdailydeal.com,One deal a day US,seed,new,7,,,,,0,failed,,,,no,analysis parse error
-SideDeal,https://sidedeal.com,Daily deals sister site to Meh,seed,new,7,,,,,0,failed,,,,no,analysis parse error
 Meh,https://meh.com,One deal a day,seed,new,7,,,,,0,failed,,,,no,analysis parse error
+SideDeal,https://sidedeal.com,Daily deals sister site to Meh,seed,new,7,,,,,0,failed,,,,no,analysis parse error
