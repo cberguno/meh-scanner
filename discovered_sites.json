@@ -1,0 +1,34 @@
+[
+  {
+    "title": "MassDrop",
+    "link": "https://www.massdrop.com",
+    "snippet": "Community-driven e-commerce platform offering group-buy deals on enthusiast products",
+    "niche": "Enthusiast",
+    "confidence": 9,
+    "discovery_source": "ai"
+  },
+  {
+    "title": "Whiskey Wash",
+    "link": "https://thewhiskeywash.com",
+    "snippet": "Daily deals on premium whiskey and bourbon products",
+    "niche": "Spirits",
+    "confidence": 8,
+    "discovery_source": "ai"
+  },
+  {
+    "title": "Gear Hungry",
+    "link": "https://www.gearhungry.com",
+    "snippet": "Daily deals on outdoor, tech, and lifestyle products",
+    "niche": "Outdoor/Tech/Lifestyle",
+    "confidence": 7,
+    "discovery_source": "ai"
+  },
+  {
+    "title": "Jomashop",
+    "link": "https://www.jomashop.com",
+    "snippet": "Daily deals on luxury watches and accessories",
+    "niche": "Watches",
+    "confidence": 8,
+    "discovery_source": "ai"
+  }
+]

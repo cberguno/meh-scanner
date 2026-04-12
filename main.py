@@ -1,3 +1,4 @@
+import argparse
 import os
 import time
 
@@ -9,6 +10,11 @@ from scoring import build_candidate_records
 from scraper import enrich_candidates, mark_candidates_seen, search_for_deal_sites
 
 def main():
+    parser = argparse.ArgumentParser(description="Meh-Scanner: daily deal site discovery")
+    parser.add_argument("--discover", action="store_true",
+                        help="Run AI-powered discovery of new deal sites before scanning")
+    args = parser.parse_args()
+
     start_time = time.time()
     logger.info("run_started", message="Meh-Scanner starting...")
 
@@ -19,10 +25,42 @@ def main():
 
     logger.info("config_loaded", message="All modules loaded successfully!")
 
+    # ── AI Discovery (optional) ──────────────────────────────────────────
+    if args.discover:
+        try:
+            from ai_discovery import discover_new_sites
+            new_sites = discover_new_sites()
+            if new_sites:
+                logger.info("discovery_complete",
+                            message=f"AI discovery found {len(new_sites)} new sites",
+                            count=len(new_sites))
+        except Exception as e:
+            logger.error("discovery_failed", error=str(e),
+                         message=f"AI discovery failed: {e}")
+
+    # ── Load previously discovered sites into candidate pool ─────────────
+    discovered_candidates = []
+    try:
+        from ai_discovery import get_discovered_as_candidates
+        discovered_candidates = get_discovered_as_candidates()
+        if discovered_candidates:
+            logger.info("discovery_loaded",
+                        message=f"Loaded {len(discovered_candidates)} previously discovered sites",
+                        count=len(discovered_candidates))
+    except Exception:
+        pass
+
     # Phase 3: Scrape and analyze with error handling
     logger.info("search_phase", message="Starting search for deal sites...")
     try:
         sites = search_for_deal_sites()
+        # Merge discovered sites (deduplicate by link)
+        if discovered_candidates:
+            existing = {s["link"].rstrip("/").lower() for s in sites}
+            for dc in discovered_candidates:
+                if dc["link"].rstrip("/").lower() not in existing:
+                    sites.append(dc)
+                    existing.add(dc["link"].rstrip("/").lower())
         if not sites:
             logger.warning("no_sites_found", message="No sites found, exiting")
             return
