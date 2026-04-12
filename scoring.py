@@ -74,7 +74,7 @@ def build_candidate_records(analyses: list[dict]) -> list[dict]:
         hits = len([x for x in ms.split(",") if x.strip()]) if ms else 0
         common = {
             "site_name": site.get("title", ""),
-            "url": site.get("link", ""),
+            "url": site.get("product_url") or site.get("link", ""),
             "snippet": site.get("snippet", "") or "",
             "discovery_source": site.get("discovery_source", "") or "",
             "source_status": site.get("source_status", "") or "",

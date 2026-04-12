@@ -20,3 +20,6 @@ Thumbs.db
 
 # Credentials
 *.json  # except service account if needed later
+
+# Test artifacts
+_pytest_tmp_work/
