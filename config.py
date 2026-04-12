@@ -41,6 +41,13 @@ class Config:
     SEARCH_MIN_LIVE_CANDIDATES = _env_int("SEARCH_MIN_LIVE_CANDIDATES", 3)
     SEARCH_REJECTION_SAMPLE_LIMIT = _env_int("SEARCH_REJECTION_SAMPLE_LIMIT", 8)
 
+    # Minimum product data completeness (0–100 %) after page scrape.
+    # A scraped page scoring below this threshold is dropped before Claude analysis.
+    # Essential fields scored: deal_title, deal_price, image_url, brand (each 25 pts).
+    # Default 0 = disabled (keep all scraped pages for backward compatibility).
+    # Recommended: 25 (require at least a title) to filter completely blank scrapes.
+    SCRAPE_MIN_COMPLETENESS_PCT = _env_int("SCRAPE_MIN_COMPLETENESS_PCT", 0)
+
     # ── Curated seed list: known US Meh-style daily deal sites ──────────────
     # These are visited directly every run — no search needed.
     SEED_DEAL_SITES = [
@@ -60,6 +67,7 @@ class Config:
         {"title": "Last Bottle",     "link": "https://lastbottle.com",        "snippet": "Single wine deal per day until gone"},
         {"title": "Yugster",         "link": "https://www.yugster.com",       "snippet": "Electronics gadget daily deal"},
         {"title": "Woot",            "link": "https://www.woot.com",          "snippet": "Daily deals electronics home tools"},
+        {"title": "MorningSave",     "link": "https://morningsave.com",       "snippet": "Curated daily deals on quality products"},
     ]
 
     # ── Discovery queries: find NEW sites beyond the seed list ───────────────

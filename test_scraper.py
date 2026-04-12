@@ -1,6 +1,7 @@
 import requests
 import pytest
 from tenacity import wait_none
+from bs4 import BeautifulSoup
 
 import scraper
 
@@ -12,6 +13,166 @@ class DummyResponse:
 
     def json(self) -> dict:
         return self._payload
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Helpers for new product quality functions
+# ──────────────────────────────────────────────────────────────────────────────
+
+def make_soup(html: str) -> BeautifulSoup:
+    return BeautifulSoup(html, "html.parser")
+
+
+# ── _extract_json_ld_product ──────────────────────────────────────────────────
+
+def test_extract_json_ld_product_returns_first_product():
+    html = """<html><head>
+    <script type="application/ld+json">{"@type": "Product", "name": "Widget", "brand": {"name": "Acme"}}</script>
+    </head></html>"""
+    ld = scraper._extract_json_ld_product(make_soup(html))
+    assert ld.get("name") == "Widget"
+    assert ld.get("brand", {}).get("name") == "Acme"
+
+
+def test_extract_json_ld_product_handles_list_wrapper():
+    html = """<html><head>
+    <script type="application/ld+json">[{"@type": "WebSite", "name": "Shop"},
+    {"@type": "Product", "name": "Gadget"}]</script>
+    </head></html>"""
+    ld = scraper._extract_json_ld_product(make_soup(html))
+    assert ld.get("name") == "Gadget"
+
+
+def test_extract_json_ld_product_handles_graph():
+    html = """<html><head>
+    <script type="application/ld+json">{"@graph": [{"@type": "WebPage"}, {"@type": "Product", "name": "GraphItem"}]}</script>
+    </head></html>"""
+    ld = scraper._extract_json_ld_product(make_soup(html))
+    assert ld.get("name") == "GraphItem"
+
+
+def test_extract_json_ld_product_returns_empty_when_no_product():
+    html = """<html><head>
+    <script type="application/ld+json">{"@type": "WebSite", "name": "Shop"}</script>
+    </head></html>"""
+    ld = scraper._extract_json_ld_product(make_soup(html))
+    assert ld == {}
+
+
+def test_extract_json_ld_product_handles_invalid_json():
+    html = """<html><head>
+    <script type="application/ld+json">THIS IS NOT JSON</script>
+    </head></html>"""
+    ld = scraper._extract_json_ld_product(make_soup(html))
+    assert ld == {}
+
+
+# ── _compute_completeness ────────────────────────────────────────────────────
+
+def test_compute_completeness_all_fields():
+    rec = {"deal_title": "Shoe", "deal_price": "$30", "image_url": "http://img", "brand": "Nike"}
+    assert scraper._compute_completeness(rec) == 1.0
+
+
+def test_compute_completeness_half_fields():
+    rec = {"deal_title": "Shoe", "deal_price": "$30", "image_url": "", "brand": ""}
+    assert scraper._compute_completeness(rec) == 0.5
+
+
+def test_compute_completeness_no_fields():
+    rec = {"deal_title": "", "deal_price": "", "image_url": "", "brand": ""}
+    assert scraper._compute_completeness(rec) == 0.0
+
+
+def test_compute_completeness_ignores_whitespace_only():
+    rec = {"deal_title": "   ", "deal_price": "$10", "image_url": "", "brand": ""}
+    assert scraper._compute_completeness(rec) == pytest.approx(0.25)
+
+
+# ── _compute_canonical_key ───────────────────────────────────────────────────
+
+def test_compute_canonical_key_gtin_takes_priority():
+    rec = {"gtin": "012345678901", "brand": "Acme", "deal_title": "Widget"}
+    key = scraper._compute_canonical_key(rec)
+    assert key == "gtin:012345678901"
+
+
+def test_compute_canonical_key_brand_title_fallback():
+    rec = {"gtin": "", "brand": "Nike", "deal_title": "Air Max"}
+    key = scraper._compute_canonical_key(rec)
+    assert key.startswith("bt:")
+    assert len(key) > 3
+
+
+def test_compute_canonical_key_title_only_fallback():
+    rec = {"gtin": "", "brand": "", "deal_title": "Mystery Product"}
+    key = scraper._compute_canonical_key(rec)
+    assert key.startswith("t:")
+
+
+def test_compute_canonical_key_empty_returns_empty():
+    rec = {"gtin": "", "brand": "", "deal_title": ""}
+    assert scraper._compute_canonical_key(rec) == ""
+
+
+def test_compute_canonical_key_same_inputs_produce_same_key():
+    rec1 = {"gtin": "", "brand": "Acme", "deal_title": "Widget Pro"}
+    rec2 = {"gtin": "", "brand": "ACME", "deal_title": "Widget  Pro"}
+    # Normalization (lowercase + whitespace collapse) makes these equal
+    assert scraper._compute_canonical_key(rec1) == scraper._compute_canonical_key(rec2)
+
+
+# ── _extract_from_soup: structured-data-first ────────────────────────────────
+
+def test_extract_from_soup_uses_json_ld_for_price():
+    html = """<html><head>
+    <script type="application/ld+json">{"@type":"Product","name":"Dealiator",
+    "offers":{"@type":"Offer","price":"29.99","priceCurrency":"USD"}}</script>
+    <title>Dealiator</title></head><body><h1>Dealiator</h1></body></html>"""
+    result = scraper._extract_from_soup(make_soup(html), "https://example.com/")
+    assert "29.99" in result["deal_price"]
+    assert result["deal_title"] == "Dealiator"
+
+
+def test_extract_from_soup_extracts_brand():
+    html = """<html><head>
+    <script type="application/ld+json">{"@type":"Product","name":"Shoe",
+    "brand":{"@type":"Brand","name":"Adidas"}}</script>
+    </head><body><h1>Shoe</h1></body></html>"""
+    result = scraper._extract_from_soup(make_soup(html), "https://example.com/")
+    assert result["brand"] == "Adidas"
+
+
+def test_extract_from_soup_extracts_image():
+    html = """<html><head>
+    <meta property="og:image" content="https://img.example.com/shoe.jpg"/>
+    <title>Shoe deal</title></head><body></body></html>"""
+    result = scraper._extract_from_soup(make_soup(html), "https://example.com/")
+    assert result["image_url"] == "https://img.example.com/shoe.jpg"
+
+
+def test_extract_from_soup_returns_completeness_and_canonical_key():
+    html = """<html><head>
+    <script type="application/ld+json">{"@type":"Product","name":"Thing",
+    "offers":{"price":"9.99","priceCurrency":"USD"},
+    "brand":{"name":"Makers"},"image":"https://img/t.jpg"}</script>
+    </head><body><h1>Thing</h1></body></html>"""
+    result = scraper._extract_from_soup(make_soup(html), "https://example.com/")
+    assert result["completeness_score"] == 1.0
+    assert result["canonical_key"].startswith("bt:")
+
+
+# ── _is_blocked_domain: new domains ─────────────────────────────────────────
+
+def test_is_blocked_domain_new_spam_sites():
+    for domain_url in [
+        "https://dealnews.com/product",
+        "https://retailmenot.com/view/deal",
+        "https://slickdeals.net/deals",
+        "https://wirecutter.com/reviews",
+        "https://consumerreports.org/test",
+    ]:
+        assert scraper._is_blocked_domain(domain_url), f"Expected {domain_url} to be blocked"
 
 
 def configure_search_env(
