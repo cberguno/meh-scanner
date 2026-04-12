@@ -1,26 +1,17 @@
-site_name	url	deal_title	deal_price	original_price	quality_score	accepted	rejection_reason	niche
-Steep & Cheap	https://www.steepandcheap.com	Steep & Cheap - Outdoor Clothing & Gear			8	yes		Outdoor gear
-Camofire	https://www.camofire.com	Current Deals			8	yes		Hunting and outdoor gear
-Woot	https://www.woot.com	Free shipping for Prime members on Woot!	$ 15		9	yes		Electronics, home goods, apparel
-Jane	https://jane.com	Daily Boutique Deals | Jane.com	$15		8	yes		Women's fashion and accessories
-Last Bottle	https://lastbottle.com	Cerro Cabernet Sauvignon Napa Valley 2021	$ 0		9	yes		wine deals
-Touch of Modern	https://www.touchofmodern.com	I love discovering cool new stuff on TouchOfModern.com! Check out my invitation to start your haute hunting.			5	no	score 5 < 6	men's lifestyle products
-Yugster	https://www.yugster.com				5	no	score 5 < 6	Electronics gadgets
-AppSumo	https://appsumo.com	AppSumo - Discover products. Stay weird.	$49		9	yes		Software and digital products
-BJJHQ	https://www.bjjhq.com	Inverted Gear Comp Light BJJ Gi - Blue	$5		8	yes		Brazilian Jiu-Jitsu gear
-Drop	https://drop.com	Drop - Gaming Collaborations			8	yes		Gaming and enthusiast gear
-Cheapest website for online shopping: Unlock Savings 2026	https://randyspeckmandesign.com/your-wallet-will-thank-you-top-websites-for-affordable-online-shopping/	Your Wallet Will Thank You: Top Websites for Affordable Online Shopping			2	no	score 2 < 6	none
-1Sale	https://www.1sale.com	Coupon Codes, Promo Codes, Daily Deals, Save Money Today | 1Sale	$ 29.74		8	yes		Daily deals/flash sales
-UntilGone	https://www.untilgone.com	UntilGone.com	$119.49		7	yes		Meh-style daily deals
-Meh	https://meh.com	Account	$ 14		9	yes		Daily discounted products
-That Daily Deal	https://www.thatdailydeal.com	Moon Lamp With 16 Color Options and Remote Control - SHIPS FREE!	$14.99		8	yes		Daily deals on consumer products
-Tanga	https://www.tanga.com	American Owned & Operated	$23.99		8	yes		Daily deals
-FAQ/Policy - Peachy Planner Deals	https://peachyplannerdeals.com/faq/	403 - Forbidden			0	no	score 0 < 6	N/A
-Curvy Culture Boutique: Don't Miss Our $15 Flash Sale! - Lemon8	https://www.lemon8-app.com/@officialculturescloset/7550108054085485070?region=us	FLASH SALE	$15		8	yes		Plus-size women's fashion
-Exciting Flash Sale: 25% Off Handmade Items! - Lemon8	https://www.lemon8-app.com/@artistry_by_ashlee/7471406069572010542?region=us	Flash Sale!!!! 25 Off	$15		8	yes		Handmade/artisanal products
-SideDeal	https://sidedeal.com	Account	$ 8	$50	8	yes		Daily deals
-New Cyber Monday Sales Scheme - Spiral Knights - Forums	https://forums.spiralknights.com/en/node/124775	Spiral Knights - New Cyber Monday Sales Scheme	$50		0	no	score 0 < 6	video game discussion
-One Day Only Deals for Seasonal Items	https://www.13deals.com/store/categories/105-seasonal	One Day Only Deals for Seasonal Items	$0.79		7	yes		Seasonal items
-Mooboo Back-to-School Week: One Deal a Day, Just for You!	https://www.mooboo.co/mooboo-back-to-school-week-one-deal-a-day-just-for-you/	Mooboo Back-to-School Week: One Deal a Day, Just for You!			8	yes		Back-to-school drinks and beverages
-12 Days of Deals - Scout Shop	https://www.scoutshop.org/12-days-of-deals?srsltid=AfmBOopU079pMbgGF1StB5cnGvEJiCbf2ovNacov_ZMuXvozPcRlDxeE	Scout's Honor: Deals You Can Trust!	$125		8	yes		General consumer goods
-Buy (3) $15 Big City Diner Deal Cards For Half Price!	https://alohafridaydeals.com/buy-3-15-big-city-diner-deal-cards-for-half-price/	Buy (3) $15 Big City Diner Deal Cards For Half Price!	$15		7	yes		Daily deals
+site_name	url	snippet	discovery_source	source_status	vibe_score	deal_title	deal_price	original_price	meh_signals	meh_signal_hits	scrape_method	quality_score	niche	rationale	accepted	rejection_reason
+Woot	https://www.woot.com	Daily deals electronics home tools	seed	new	7	Woot			woot	1	requests				no	analysis parse error
+AppSumo	https://appsumo.com	Software deals today only limited	seed	new	7	AppSumo - Discover products. Stay weird.	$49			0	requests				no	analysis parse error
+Camofire	https://www.camofire.com	Hunting outdoor daily deal one at a time	seed	new	7					0	failed				no	analysis parse error
+BJJHQ	https://www.bjjhq.com	One BJJ gear deal a day	seed	new	7	93brand "Butterfly Originals" Casual Gi Pants - Black $37 on BJJHQ. One Great BJJ Gear Deal A Day.	$5		today only	1	requests				no	analysis parse error
+Jane	https://jane.com	Women boutique daily deals	seed	new	7	Daily Boutique Deals | Jane.com	$15		daily deal	1	requests				no	analysis parse error
+Touch of Modern	https://www.touchofmodern.com	Men lifestyle daily flash sale	seed	new	7	I love discovering cool new stuff on TouchOfModern.com! Check out my invitation to start your haute hunting.				0	requests				no	analysis parse error
+Last Bottle	https://lastbottle.com	Single wine deal per day until gone	seed	new	7					0	failed				no	analysis parse error
+Drop	https://drop.com	Enthusiast daily deals audio keyboards EDC	seed	new	7	Drop - Gaming Collaborations			pass	1	requests				no	analysis parse error
+Steep & Cheap	https://www.steepandcheap.com	Outdoor gear flash deal daily	seed	new	7	JavaScript is disabled				0	requests				no	analysis parse error
+Tanga	https://www.tanga.com	Deal of the day since 2006	seed	new	7	American Owned & Operated	$29.99			0	requests				no	analysis parse error
+1Sale	https://www.1sale.com	Daily deals flash sale	seed	new	7	Coupon Codes, Promo Codes, Daily Deals, Save Money Today | 1Sale	$ 9.99		daily deal	1	requests				no	analysis parse error
+Yugster	https://www.yugster.com	Electronics gadget daily deal	seed	new	7					0	failed				no	analysis parse error
+UntilGone	https://www.untilgone.com	Limited quantity daily deals	seed	new	7	UntilGone.com	$69.99			0	requests				no	analysis parse error
+Meh	https://meh.com	One deal a day	seed	new	7	Odyssey Toys Zoom Cam Mini RC Racer FPV	$ 29	$80		0	requests				no	analysis parse error
+SideDeal	https://sidedeal.com	Daily deals sister site to Meh	seed	new	7	Account	$ 8	$50	flash sale	1	requests				no	analysis parse error
+That Daily Deal	https://www.thatdailydeal.com	One deal a day US	seed	new	7					0	failed				no	analysis parse error
