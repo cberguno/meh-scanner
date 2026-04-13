@@ -6,6 +6,7 @@ Uses the project's existing StructuredLogger (not structlog).
 import json
 import re
 import time
+from urllib.parse import urlparse
 
 from affiliate import apply_affiliate_url
 from alerts import check_and_fire_alerts
@@ -14,7 +15,7 @@ from sheets import append_deals
 from config import Config
 from dashboard_export import export_daily_dashboard, write_project_root_candidate_files
 from scoring import build_candidate_records
-from db import record_source_visit
+from db import record_source_visit, get_trusted_domains
 from logger import logger
 from scraper import (
     enrich_candidates,
@@ -57,6 +58,7 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
     _filtered   = 0
     _sheets_status = "skip"
     _marked_seen = 0
+    _llm_calls_saved = 0
     search_diag: dict = {}
 
     # ── Phase 1: search & enrich ────────────────────────────────────────────
@@ -78,8 +80,40 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
 
     # ── Phase 2: analyze ────────────────────────────────────────────────────
     try:
-        logger.info("analysis_phase", f"Analyzing {len(sites)} sites…")
-        analyses = analyze_sites_batch(sites)
+        # ── Part A: trusted source bypass ──────────────────────────────────
+        trusted_domains = get_trusted_domains()
+        trusted_sites, untrusted_sites = [], []
+        for s in sites:
+            host = urlparse(s.get("link", "")).netloc.lower()
+            if host.startswith("www."):
+                host = host[4:]
+            if host in trusted_domains:
+                trusted_sites.append(s)
+            else:
+                untrusted_sites.append(s)
+
+        _llm_calls_saved = len(trusted_sites)
+        if trusted_sites:
+            logger.info(
+                "trusted_bypass",
+                f"Trusted bypass: saved {_llm_calls_saved} LLM call(s) — "
+                + str([s.get("title", s.get("link", "")) for s in trusted_sites]),
+                saved=_llm_calls_saved,
+            )
+
+        trusted_analyses = [
+            {
+                "site": s,
+                "analysis": json.dumps({
+                    "quality_score": 8,
+                    "rationale": "Trusted source — auto-accepted (≥5 scans, status=keep).",
+                    "niche": s.get("niche", ""),
+                }),
+            }
+            for s in trusted_sites
+        ]
+        llm_analyses = analyze_sites_batch(untrusted_sites) if untrusted_sites else []
+        analyses = trusted_analyses + llm_analyses
         _analyzed = len(analyses)
         _marked_seen = mark_candidates_seen([item["site"] for item in analyses])
         logger.info("debug_analyses", f"DEBUG analysis done: {len(analyses)} results", count=len(analyses))
@@ -110,6 +144,8 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
                         "quality_score": c["quality_score"],
                         "deal_price": c.get("deal_price", ""),
                         "original_price": c.get("original_price", ""),
+                        "deal_title": c.get("deal_title", ""),
+                        "promo_copy": c.get("promo_copy", ""),
                     }
                 )
             )
@@ -161,6 +197,18 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
     except Exception as _exc:
         print(f"[candidates dump failed: {_exc}]")
 
+    # ── Phase 3a: market price verification ─────────────────────────────────
+    if Config.MARKET_CHECK_ENABLED and deals:
+        try:
+            from market_check import check_market_prices
+            deals = check_market_prices(deals)
+        except Exception as exc:
+            logger.error(
+                "market_check_failed",
+                f"Market check failed (continuing): {exc}",
+                error=str(exc),
+            )
+
     # ── Phase 3b: fire alerts for high-quality deals ────────────────────────
     check_and_fire_alerts(deals)
 
@@ -185,25 +233,58 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
 
     # ── Phase 4: export dashboard ────────────────────────────────────────────
     runtime = time.time() - start
-    try:
-        export_daily_dashboard(deals, candidates_count=len(sites), runtime_seconds=runtime,
-                               all_candidates=all_candidates)
-    except Exception as exc:
-        logger.error("dashboard_export_failed", f"Export failed (continuing): {exc}", error=str(exc))
-
     _missing = [k for k, v in [
         ("SERPER_API_KEY",    Config.SERPER_API_KEY),
         ("ANTHROPIC_API_KEY", Config.ANTHROPIC_API_KEY),
         ("GOOGLE_SHEET_ID",   Config.GOOGLE_SHEET_ID),
         ("GOOGLE_SERVICE_ACCOUNT_JSON", Config.GOOGLE_SERVICE_ACCOUNT_JSON),
     ] if not v]
+    try:
+        export_daily_dashboard(
+            deals,
+            candidates_count=len(sites),
+            runtime_seconds=runtime,
+            scan_summary={
+                "discovered":  _discovered,
+                "enriched":    _enriched,
+                "analyzed":    _analyzed,
+                "parse_fail":  _parse_fail,
+                "scored":      _scored,
+                "filtered":    _filtered,
+                "deals":       len(deals),
+                "sheets":      _sheets_status,
+                "missing_keys": _missing,
+                "search_queries_total": search_diag.get("queries_total", 0),
+                "search_queries_succeeded": search_diag.get("queries_succeeded", 0),
+                "search_queries_failed": search_diag.get("queries_failed", 0),
+                "search_live": search_diag.get("selected_search_candidates", 0),
+                "search_seed": search_diag.get("selected_seed_candidates", 0),
+                "search_degraded": search_diag.get("degraded_search", False),
+                "search_low_yield": search_diag.get("low_yield_search", False),
+                "search_relaxed_threshold": search_diag.get("relaxed_vibe_threshold_used", False),
+                "search_drop_summary": _format_drop_summary(search_diag.get("drop_reasons", {})),
+                "search_drop_reasons": dict(search_diag.get("drop_reasons", {})),
+                "search_query_candidates": dict(search_diag.get("query_candidates", {})),
+                "search_query_borderline_candidates": dict(search_diag.get("query_borderline_candidates", {})),
+                "search_query_product_like_candidates": dict(search_diag.get("query_product_like_candidates", {})),
+                "search_product_like_candidates": search_diag.get("product_like_candidates", 0),
+                "search_product_like_promoted": search_diag.get("product_like_promoted_candidates", 0),
+                "search_rejection_samples": list(search_diag.get("rejection_samples", [])),
+                "seen_marked": _marked_seen,
+                "llm_calls_saved": _llm_calls_saved,
+            },
+            all_candidates=all_candidates,
+        )
+    except Exception as exc:
+        logger.error("dashboard_export_failed", f"Export failed (continuing): {exc}", error=str(exc))
+
     logger.info(
         "scan_summary",
         f"scan_summary discovered={_discovered} enriched={_enriched} analysis={_analyzed} "
         f"parse_fail={_parse_fail} scored={_scored} filtered={_filtered} deals={len(deals)} "
         f"sheets={_sheets_status} search_ok={search_diag.get('queries_succeeded', 0)}/{search_diag.get('queries_total', 0)} "
         f"live={search_diag.get('selected_search_candidates', 0)} seed={search_diag.get('selected_seed_candidates', 0)} "
-        f"seen_marked={_marked_seen} missing_keys={_missing}",
+        f"seen_marked={_marked_seen} llm_saved={_llm_calls_saved} missing_keys={_missing}",
         discovered=_discovered, enriched=_enriched, analysis=_analyzed,
         parse_fail=_parse_fail, scored=_scored, filtered=_filtered,
         deals=len(deals), sheets=_sheets_status, missing_keys=_missing,
@@ -254,7 +335,15 @@ def run_full_scan(force_domains: frozenset = frozenset()) -> dict:
             "search_low_yield": search_diag.get("low_yield_search", False),
             "search_relaxed_threshold": search_diag.get("relaxed_vibe_threshold_used", False),
             "search_drop_summary": _format_drop_summary(search_diag.get("drop_reasons", {})),
+            "search_drop_reasons": dict(search_diag.get("drop_reasons", {})),
+            "search_query_candidates": dict(search_diag.get("query_candidates", {})),
+            "search_query_borderline_candidates": dict(search_diag.get("query_borderline_candidates", {})),
+            "search_query_product_like_candidates": dict(search_diag.get("query_product_like_candidates", {})),
+            "search_product_like_candidates": search_diag.get("product_like_candidates", 0),
+            "search_product_like_promoted": search_diag.get("product_like_promoted_candidates", 0),
+            "search_rejection_samples": list(search_diag.get("rejection_samples", [])),
             "seen_marked": _marked_seen,
+            "llm_calls_saved": _llm_calls_saved,
         },
     }
 

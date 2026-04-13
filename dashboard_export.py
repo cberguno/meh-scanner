@@ -44,6 +44,7 @@ CSV_COLUMNS = [
     "original_price",
     "meh_signals",
     "meh_signal_hits",
+    "guardrail_flags",
     "scrape_method",
     "quality_score",
     "niche",
@@ -157,6 +158,7 @@ def export_daily_dashboard(
     *,
     candidates_count: int = 0,
     runtime_seconds: float = 0.0,
+    scan_summary: dict | None = None,
     all_candidates: list[dict] | None = None,
 ) -> None:
     if not Config.MEH_DASHBOARD:
@@ -187,6 +189,8 @@ def export_daily_dashboard(
     }
     if all_candidates is not None:
         payload["candidates"] = all_candidates
+    if scan_summary is not None:
+        payload["summary"] = scan_summary
 
     if Config.MEH_DASHBOARD_DRY_RUN:
         logger.info(
@@ -254,7 +258,27 @@ def export_daily_dashboard(
         now_p = html_module.escape(str(d.get("deal_price") or "—"))
         was_p = html_module.escape(str(d.get("original_price") or "—"))
         link = html_module.escape(url)
-        row_cls = "row-hot" if score >= 8 else ("row-good" if score >= 7 else "")
+        base_cls = "row-hot" if score >= 8 else ("row-good" if score >= 7 else "")
+        row_cls = (base_cls + (" row-worth" if d.get("worth_buying") else "")).strip()
+        # Market columns — only show data when confidence is medium or high
+        confidence = d.get("match_confidence")
+        show_market = confidence in ("high", "medium")
+        if show_market:
+            mp = d.get("market_price")
+            market_p = html_module.escape(f"${mp:.2f}" if mp is not None else "—")
+            market_src = html_module.escape(str(d.get("market_source") or "—"))
+            svp = d.get("verified_savings_pct")
+            if svp is not None:
+                star = "★ " if d.get("worth_buying") else ""
+                savings_s = html_module.escape(f"{star}{svp:.1f}%")
+            else:
+                savings_s = "—"
+            conf_s = html_module.escape(confidence)
+        else:
+            market_p = "—"
+            market_src = "—"
+            savings_s = "—"
+            conf_s = html_module.escape(confidence or "—")
         rows_html.append(
             f"<tr class='{row_cls}' data-score='{score}'>"
             f"<td>{score}</td>"
@@ -262,6 +286,10 @@ def export_daily_dashboard(
             f"<td>{niche}</td>"
             f"<td>{now_p}</td>"
             f"<td>{was_p}</td>"
+            f"<td>{market_p}</td>"
+            f"<td>{market_src}</td>"
+            f"<td>{savings_s}</td>"
+            f"<td>{conf_s}</td>"
             f"<td class='rationale'>{rationale}</td>"
             f"<td><a href=\"{link}\" target=\"_blank\" rel=\"noopener\">link</a></td></tr>"
         )
@@ -272,7 +300,7 @@ def export_daily_dashboard(
         # Friendly zero-deal message
         table_body = (
             f"<tr style='text-align:center;color:#a9b1d6;'>"
-            f"<td colspan='7'>"
+            f"<td colspan='11'>"
             f"Hey there! 👋 No deals matching your current filters right now. Want to loosen things up a bit, try a different view, or let me help you explore some options? I'm here whenever you're ready! 📦"
             f"</td></tr>"
         )
@@ -328,6 +356,7 @@ def export_daily_dashboard(
     tbody tr:nth-child(even):not(.row-hot):not(.row-good) {{ background: #16161e; }}
     tr.row-good {{ box-shadow: inset 3px 0 0 #7aa2f7; }}
     tr.row-hot {{ box-shadow: inset 3px 0 0 #9ece6a; background: #1e2030; }}
+    tr.row-worth td:nth-child(8) {{ color: #e0af68; font-weight: 600; }}
     td.rationale {{ max-width: 28rem; line-height: 1.4; }}
     a {{ color: #7aa2f7; }}
     h2.section {{ font-size: 1.1rem; margin: 1.5rem 0 0.5rem 0; color: #bb9af7; }}
@@ -358,7 +387,11 @@ def export_daily_dashboard(
         <th onclick="sortCol(2)">Niche</th>
         <th onclick="sortCol(3)">Price</th>
         <th onclick="sortCol(4)">Was / MSRP</th>
-        <th onclick="sortCol(5)">Rationale</th>
+        <th onclick="sortCol(5)">Market Price</th>
+        <th onclick="sortCol(6)">Source</th>
+        <th data-type="num" onclick="sortCol(7)">Savings %</th>
+        <th onclick="sortCol(8)">Confidence</th>
+        <th onclick="sortCol(9)">Rationale</th>
         <th>URL</th>
       </tr>
     </thead>
@@ -393,7 +426,7 @@ def export_daily_dashboard(
       const q = (ft && ft.value || '').toLowerCase().trim();
       const minScore = ms ? (parseInt(ms.value, 10) || 0) : 0;
       [...tbody.rows].forEach(r => {{
-        if (r.cells.length < 7) {{ r.style.display = ''; return; }}
+        if (r.cells.length < 11) {{ r.style.display = ''; return; }}
         const score = parseInt(r.cells[0].innerText, 10) || 0;
         const hay = r.innerText.toLowerCase();
         const ok = score >= minScore && (q === '' || hay.includes(q));

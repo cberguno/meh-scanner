@@ -87,6 +87,14 @@ def init_db() -> None:
                 CREATE INDEX IF NOT EXISTS idx_seen_sites_last ON seen_sites(last_seen DESC);
             """)
             con.commit()
+            # Migration: add trusted column if this is an existing DB without it
+            try:
+                con.execute("ALTER TABLE source_stats ADD COLUMN trusted INTEGER NOT NULL DEFAULT 0")
+                # Backfill trusted flag for qualifying existing rows
+                con.execute("UPDATE source_stats SET trusted = 1 WHERE status = 'keep' AND scans_seen >= 5")
+                con.commit()
+            except Exception:
+                pass  # Column already exists
             logger.info("db_ready", "Database initialised", path=str(DB_PATH))
             # Cleanup seen_sites entries older than 1 day so daily scans can revisit candidates.
             try:
@@ -315,21 +323,23 @@ def record_source_visit(url: str, *, deal_found: bool, deal_score: float = 0.0) 
             recent = recent[-10:]          # keep only the last 10 outcomes
             status = _compute_source_status(scans_seen, deals_found_count, recent)
             avg_score = round(score_sum / deals_found_count, 2) if deals_found_count else 0.0
+            trusted = 1 if (status == "keep" and scans_seen >= 5) else 0
 
             con.execute(
                 """INSERT INTO source_stats
                        (domain, last_seen, scans_seen, deals_found, score_sum,
-                        recent_outcomes, status)
-                   VALUES (?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?)
+                        recent_outcomes, status, trusted)
+                   VALUES (?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(domain) DO UPDATE SET
                        last_seen       = CURRENT_TIMESTAMP,
                        scans_seen      = excluded.scans_seen,
                        deals_found     = excluded.deals_found,
                        score_sum       = excluded.score_sum,
                        recent_outcomes = excluded.recent_outcomes,
-                       status          = excluded.status""",
+                       status          = excluded.status,
+                       trusted         = excluded.trusted""",
                 (domain, scans_seen, deals_found_count, score_sum,
-                 _json.dumps(recent), status),
+                 _json.dumps(recent), status, trusted),
             )
             con.commit()
             logger.info(
@@ -352,6 +362,19 @@ def get_source_status(domain: str) -> str:
                 "SELECT status FROM source_stats WHERE domain = ?", (domain,)
             ).fetchone()
             return row["status"] if row else "new"
+        finally:
+            con.close()
+
+
+def get_trusted_domains() -> set[str]:
+    """Return the set of domains currently marked trusted (status=keep, scans_seen>=5)."""
+    with _LOCK:
+        con = _conn()
+        try:
+            rows = con.execute(
+                "SELECT domain FROM source_stats WHERE trusted = 1"
+            ).fetchall()
+            return {r["domain"] for r in rows}
         finally:
             con.close()
 

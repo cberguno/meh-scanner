@@ -26,6 +26,10 @@
           <th class="hidden sm:table-cell w-24">Price</th>
           <th class="hidden sm:table-cell w-24">Was</th>
           <th class="hidden lg:table-cell w-28">Est. ROI</th>
+          <th class="hidden xl:table-cell w-24">Market $</th>
+          <th class="hidden xl:table-cell">Retailer</th>
+          <th class="hidden xl:table-cell w-20">Savings</th>
+          <th class="hidden xl:table-cell w-20">Confidence</th>
           <th>Rationale</th>
           <th class="w-12">Link</th>
         </tr>
@@ -62,6 +66,28 @@
               <span class="{% if deal.roi_pct >= 30 %}text-success font-semibold{% else %}text-base-content/60{% endif %}">
                 +${{ "%.2f"|format(deal.profit) }}&nbsp;({{ deal.roi_pct }}%)
               </span>
+            {% else %}—{% endif %}
+          </td>
+          {# Market price columns — only show data for medium/high confidence #}
+          {% set show_market = deal.match_confidence in ('high', 'medium') %}
+          <td class="hidden xl:table-cell text-xs font-mono {% if show_market and deal.worth_buying %}text-warning font-semibold{% else %}text-base-content/60{% endif %}">
+            {% if show_market and deal.market_price is not none %}${{ "%.2f"|format(deal.market_price) }}{% else %}—{% endif %}
+          </td>
+          <td class="hidden xl:table-cell text-xs text-base-content/60">
+            {% if show_market %}{{ deal.market_source or "—" }}{% else %}—{% endif %}
+          </td>
+          <td class="hidden xl:table-cell text-xs font-mono {% if show_market and deal.worth_buying %}text-warning font-bold{% else %}text-base-content/60{% endif %}">
+            {% if show_market and deal.verified_savings_pct is not none %}
+              {% if deal.worth_buying %}★ {% endif %}{{ "%.1f"|format(deal.verified_savings_pct) }}%
+            {% else %}—{% endif %}
+          </td>
+          <td class="hidden xl:table-cell text-xs">
+            {% if deal.match_confidence == 'high' %}
+              <span class="badge badge-success badge-xs">high</span>
+            {% elif deal.match_confidence == 'medium' %}
+              <span class="badge badge-warning badge-xs">med</span>
+            {% elif deal.match_confidence == 'low' %}
+              <span class="badge badge-ghost badge-xs">low</span>
             {% else %}—{% endif %}
           </td>
           <td class="max-w-sm">
