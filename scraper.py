@@ -6,6 +6,7 @@ import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
@@ -59,91 +60,165 @@ MEH_SIGNAL_KEYWORDS = (
 SERPER_RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 _LAST_SEARCH_DIAGNOSTICS: dict = {}
 
+def _extract_registrable_domain(url: str) -> str:
+    """Extract the registrable domain from a URL for same-domain checks."""
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    host = urlparse(url).netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
 def score_meh_vibe(title, snippet):
-    """Cheap heuristic scoring for 'Meh vibe' before Playwright visit"""
-    score = 0
+    """Cheap heuristic scoring for 'Meh vibe' before Playwright visit.
+
+    Three-tier scoring so generic shopping words don't inflate scores:
+      Strong  (+3): phrases that ONLY appear on daily-deal sites
+      Moderate (+1): deal-related but could appear on other stores
+      Weak   (+0.5): generic shopping copy — every store has these
+    """
+    score = 0.0
     text = f"{title} {snippet}".lower()
-    
-    # Positive indicators (Meh-like)
-    positive_keywords = [
-        'deal', 'sale', 'daily', 'one', 'single', 'limited', 'flash',
-        'exclusive', 'offer', 'discount', 'bargain', 'steal', 'score',
-        'witty', 'fun', 'cynical', 'sarcastic', 'humor', 'joke',
-        'drops',  # limited-release deal mechanic used by drop.com and similar
+
+    # ── STRONG signals (+3): unique to one-deal-a-day business model ─────
+    strong_phrases = [
+        "one deal a day",
+        "one deal at a time",
+        "one sale a day",
+        "deal of the day",
+        "new deal every day",
+        "new deal daily",
+        "today only deal",
+        "expires at midnight",
+        "expires tonight",
+        "until gone",
+        "until sold out",
+        "one item per day",
+        "single item sale",
+        "daily deal site",
     ]
-    
-    # Negative indicators (aggregators/marketplaces)
-    # Note: 'woot' removed — woot.com is a legitimate meh-style deal site.
-    negative_keywords = [
-        'groupon', 'slickdeals', 'amazon', 'ebay', 'aliexpress',
-        'temu', 'walmart', 'target', 'best buy', 'coupons', 'thousands',
-        'million', 'marketplace', 'storefront', 'shopify', 'etsy',
-        # Coupon/promo-code aggregators (e.g. 1sale.com) use these exact phrases
-        'coupon codes', 'promo codes',
-        # Geographic / catalog false positives
-        'india', 'flipkart', 'myntra', 'snapdeal',
-        # Multi-product catalog indicators (not one-item-per-day)
-        'all deals', 'hundreds of deals', 'thousands of deals',
-        'retailer of', 'supplier of', 'manufacturer of', 'wholesaler',
-        'get upto', 'get up to',
-        # Article/listicle indicators — sites writing ABOUT deal sites, not being one
-        'best deal sites', 'top deal sites', 'sites that', 'these sites',
-        'best websites', 'top websites', 'list of sites', 'deal sites that',
-        'daily deal sites', 'one deal a day sites',
+    for phrase in strong_phrases:
+        if phrase in text:
+            score += 3
+
+    # ── MODERATE signals (+1): deal-related, somewhat specific ───────────
+    moderate_keywords = [
+        "daily deal",
+        "flash sale",
+        "today only",
+        "limited time",
+        "one deal",
+        "one sale",
+        "meh",
+        "woot",
+        "sarcastic",
+        "witty",
+        "snark",
     ]
-    
-    for keyword in positive_keywords:
+    for keyword in moderate_keywords:
         if keyword in text:
             score += 1
-    
-    for keyword in negative_keywords:
+
+    # ── WEAK signals (+0.5): generic shopping — every store has these ────
+    weak_keywords = [
+        "deal", "sale", "discount", "bargain", "offer",
+        "exclusive", "steal", "score", "drops",
+    ]
+    for keyword in weak_keywords:
+        if keyword in text:
+            score += 0.5
+
+    # ── Domain name bonus (+2): domain itself suggests daily-deal ────────
+    if re.search(
+        r'(meh|dailydeal|daily-deal|onesale|1sale|thatdailydeal|untilgone|sidedeal|yugster|13deals)',
+        title.lower(),
+    ):
+        score += 2
+
+    # ── NEGATIVE signals ─────────────────────────────────────────────────
+    hard_negatives = [
+        "amazon", "ebay", "walmart", "target", "best buy",
+        "aliexpress", "temu", "groupon", "slickdeals",
+        "marketplace", "shopify", "etsy",
+        "flipkart", "myntra", "snapdeal", "india",
+        "thousands of deals", "hundreds of deals", "all deals",
+        "retailer of", "supplier of", "manufacturer of", "wholesaler",
+    ]
+    for keyword in hard_negatives:
+        if keyword in text:
+            score -= 3
+
+    medium_negatives = [
+        "coupon codes", "promo codes", "coupons",
+        "best deal sites", "top deal sites", "sites that",
+        "best websites", "top websites", "list of sites",
+        "deal sites that", "daily deal sites", "one deal a day sites",
+        "get up to", "get upto",
+    ]
+    for keyword in medium_negatives:
         if keyword in text:
             score -= 2
-    
-    # Increased bonus for domain patterns
-    if re.search(r'(deal|sale|meh|daily|steal|score)', title.lower()):
-        score += 2
-    
-    # Small penalty for generic Shopify/Etsy-style domains
+
     if re.search(r'(myshopify\.com|etsy\.com|shopify\.com)', text):
         score -= 1
 
-    return max(0, min(10, score))  # Clamp to 0-10
+    return max(0, min(10, int(round(score))))
 
 
 def _looks_like_product_path(path: str) -> bool:
+    """Check if a URL path looks like a specific product/deal page.
+
+    FIXED: removed the fallback that treated any 2-segment URL as a product.
+    """
     safe_path = path.lower().strip()
     if not safe_path or safe_path == "/":
         return False
-    if any(token in safe_path for token in (
+    return any(token in safe_path for token in (
         "/product", "/products/", "/item", "/items/", "/deal", "/deals/",
-        "/offer", "/sale", "/buy", "/shop/", "/daily-deal",
-    )):
-        return True
-    # Deeper URLs are more likely to be individual item pages than top-level home or category pages.
-    return safe_path.count("/") >= 2
+        "/offer", "/sale/", "/buy/", "/shop/", "/daily-deal",
+    ))
 
 
 def _should_replace_candidate_link(original_url: str, candidate_url: str) -> bool:
+    """Decide whether to replace the discovery URL with a scraped redirect/canonical.
+
+    FIXED: requires same domain. Cross-domain replacements are blocked.
+    FIXED: removed "deeper path always wins" heuristic.
+    """
     if not original_url or not candidate_url or original_url == candidate_url:
         return False
-    from urllib.parse import urlparse
 
     if not original_url.startswith(("http://", "https://")):
         original_url = "https://" + original_url
     if not candidate_url.startswith(("http://", "https://")):
         candidate_url = "https://" + candidate_url
 
+    # Same-domain check
+    orig_domain = _extract_registrable_domain(original_url)
+    cand_domain = _extract_registrable_domain(candidate_url)
+    if orig_domain != cand_domain:
+        logger.debug(
+            "link_replace_blocked_cross_domain",
+            f"Blocked cross-domain replacement: {original_url} → {candidate_url}",
+            original_domain=orig_domain,
+            candidate_domain=cand_domain,
+        )
+        return False
+
     orig_path = urlparse(original_url).path or "/"
     cand_path = urlparse(candidate_url).path or "/"
     if cand_path == orig_path:
         return False
+
+    # Homepage → anything deeper on same domain
     if orig_path in ("/", "") and cand_path not in ("/", ""):
         return True
+
+    # Non-product path → product path on same domain
     if _looks_like_product_path(cand_path) and not _looks_like_product_path(orig_path):
         return True
-    if len(cand_path.strip("/").split("/")) > len(orig_path.strip("/").split("/")):
-        return True
+
     return False
 
 
@@ -1273,7 +1348,8 @@ def enrich_candidates(sites: list[dict]) -> list[dict]:
                         finally:
                             page.close()
                             context.close()
-                        final_url = extra.get("final_url") or extra.get("canonical_url") or extra.get("og_url")
+                        # Prefer canonical (most authoritative) > og_url > final_url (redirect noise)
+                        final_url = extra.get("canonical_url") or extra.get("og_url") or extra.get("final_url")
                         if final_url and _should_replace_candidate_link(url, final_url):
                             site = {**site, "link": final_url}
                         enriched.append({**site, **extra})
