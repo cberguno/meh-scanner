@@ -6,10 +6,11 @@ browser for OAuth consent.
 
 The goal is to end up with:
 
-- A GCP project `meh-scanner` with the Sheets + Drive APIs enabled
+- A GCP project `meh-scanner` with the Sheets API enabled
 - A service account `meh-scanner-sa` with a downloaded JSON key
-- A Google Sheet `Meh-Scanner Deals` owned by the service account and shared
-  with you as Editor
+- The **existing** Google Sheet
+  (`1RAdedQhNpyTgM86z3eRDsbbT_h9tNTRCN9tMvkfh7Zg`) shared with the service
+  account email as Editor, with a tab named exactly `Deals`
 - `GOOGLE_SHEET_ID` and `GOOGLE_SERVICE_ACCOUNT_JSON` (base64) set in both your
   local `.env` and as GitHub Actions secrets on `cberguno/meh-scanner`
 
@@ -75,8 +76,11 @@ gcloud config set project "$PROJECT_ID"
 ## 4. Enable required APIs
 
 ```bash
-gcloud services enable sheets.googleapis.com drive.googleapis.com
+gcloud services enable sheets.googleapis.com
 ```
+
+Drive API is not needed — the sheet already exists, and writes use the Sheets
+API only.
 
 ---
 
@@ -106,57 +110,31 @@ The key lands at `./meh-scanner-sa.json`. `.gitignore` already excludes
 
 ---
 
-## 7. Create the Google Sheet (owned by the SA, shared with you)
+## 7. Share the existing sheet with the service account
 
-The service account creates the sheet in its own Drive, then grants you Editor
-access. Replace `YOUR_EMAIL` with your personal Google email.
+Open the existing sheet in your browser:
 
-```bash
-pip install --upgrade google-auth google-api-python-client
+```
+https://docs.google.com/spreadsheets/d/1RAdedQhNpyTgM86z3eRDsbbT_h9tNTRCN9tMvkfh7Zg
 ```
 
-```bash
-python - <<'PY'
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
+1. Click **Share** (top-right).
+2. In the "Add people and groups" field, paste the service account email
+   captured in step 5 (`$SA_EMAIL`, looks like
+   `meh-scanner-sa@<project-id>.iam.gserviceaccount.com`).
+3. Set the role to **Editor**.
+4. Uncheck "Notify people" (service accounts have no inbox).
+5. Click **Share**.
 
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
+Then confirm the sheet has a tab named exactly `Deals` (case-sensitive). If
+not, rename the existing tab or add a new one called `Deals` — `sheets.py`
+writes to `Deals!A:M` and will fail if the tab is missing.
 
-creds = service_account.Credentials.from_service_account_file(
-    "meh-scanner-sa.json", scopes=SCOPES
-)
+The sheet ID to use everywhere below is:
 
-sheets = build("sheets", "v4", credentials=creds, cache_discovery=False)
-drive  = build("drive",  "v3", credentials=creds, cache_discovery=False)
-
-ss = sheets.spreadsheets().create(
-    body={
-        "properties": {"title": "Meh-Scanner Deals"},
-        "sheets":     [{"properties": {"title": "Deals"}}],
-    },
-    fields="spreadsheetId",
-).execute()
-sheet_id = ss["spreadsheetId"]
-
-your_email = input("Your personal Google email: ").strip()
-drive.permissions().create(
-    fileId=sheet_id,
-    sendNotificationEmail=False,
-    body={"type": "user", "role": "writer", "emailAddress": your_email},
-).execute()
-
-print()
-print(f"GOOGLE_SHEET_ID={sheet_id}")
-print(f"URL: https://docs.google.com/spreadsheets/d/{sheet_id}")
-print(f"Shared with: {your_email}")
-PY
 ```
-
-Copy the `GOOGLE_SHEET_ID=...` line — you will paste it into `.env` and into
-GitHub secrets below.
+1RAdedQhNpyTgM86z3eRDsbbT_h9tNTRCN9tMvkfh7Zg
+```
 
 ---
 
@@ -184,10 +162,10 @@ Single-line output is required so it fits cleanly in a `.env` value.
 cp -n .env.example .env 2>/dev/null || true
 ```
 
-Edit `.env` and set (replace placeholders with real values):
+Edit `.env` and set:
 
 ```
-GOOGLE_SHEET_ID=<paste sheet id from step 7>
+GOOGLE_SHEET_ID=1RAdedQhNpyTgM86z3eRDsbbT_h9tNTRCN9tMvkfh7Zg
 GOOGLE_SERVICE_ACCOUNT_JSON=<paste contents of meh-scanner-sa.b64>
 ```
 
@@ -228,7 +206,7 @@ From the repo clone:
 ```bash
 gh secret set GOOGLE_SHEET_ID \
   --repo cberguno/meh-scanner \
-  --body "<paste sheet id from step 7>"
+  --body "1RAdedQhNpyTgM86z3eRDsbbT_h9tNTRCN9tMvkfh7Zg"
 
 gh secret set GOOGLE_SERVICE_ACCOUNT_JSON \
   --repo cberguno/meh-scanner \
@@ -270,8 +248,10 @@ gcloud iam service-accounts keys delete <OLD_KEY_ID> --iam-account="$SA_EMAIL"
 py main.py
 ```
 
-Open the sheet URL from step 7 and confirm a new row landed in the `Deals`
-tab with all 13 columns populated:
+Open the sheet at
+`https://docs.google.com/spreadsheets/d/1RAdedQhNpyTgM86z3eRDsbbT_h9tNTRCN9tMvkfh7Zg`
+and confirm a new row landed in the `Deals` tab with all 13 columns
+populated:
 
 ```
 Site | URL | Niche | Score | Price | Was | Est. ROI % | Rationale |
