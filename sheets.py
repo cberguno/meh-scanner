@@ -19,7 +19,7 @@ from logger import logger
 
 SCOPES    = ["https://www.googleapis.com/auth/spreadsheets"]
 SHEET_TAB = "Deals"
-HEADERS   = ["Site", "URL", "Niche", "Score", "Price", "Was", "Est. ROI %", "Rationale", "Scanned At"]
+HEADERS   = ["Site", "URL", "Niche", "Score", "Price", "Was", "Est. ROI %", "Rationale", "Market Price", "Market Source", "Savings %", "Confidence", "Scanned At"]
 
 
 def _load_credentials():
@@ -115,23 +115,28 @@ def append_deals(deals: list[dict]) -> bool:
             payload.append(HEADERS)
 
         for d in new_deals:
-            roi = f"{d['roi_pct']}%" if d.get("roi_pct") is not None else ""
+            roi     = f"{d['roi_pct']}%"              if d.get("roi_pct")              is not None else ""
+            savings = f"{d['verified_savings_pct']}%" if d.get("verified_savings_pct") is not None else ""
             payload.append([
-                d.get("site_name",      ""),
-                d.get("url",            ""),
-                d.get("niche",          ""),
-                d.get("quality_score",  ""),
-                d.get("deal_price",     ""),
-                d.get("original_price", ""),
+                d.get("site_name",        ""),
+                d.get("url",              ""),
+                d.get("niche",            ""),
+                d.get("quality_score",    ""),
+                d.get("deal_price",       ""),
+                d.get("original_price",   ""),
                 roi,
-                d.get("rationale",      ""),
+                d.get("rationale",        ""),
+                d.get("market_price",     ""),
+                d.get("market_source",    ""),
+                savings,
+                d.get("match_confidence", ""),
                 now,
             ])
 
         # ── Append to sheet ───────────────────────────────────────────────────
         sheet.append(
             spreadsheetId=Config.GOOGLE_SHEET_ID,
-            range=f"{SHEET_TAB}!A:I",
+            range=f"{SHEET_TAB}!A:M",
             valueInputOption="RAW",
             insertDataOption="INSERT_ROWS",
             body={"values": payload},
