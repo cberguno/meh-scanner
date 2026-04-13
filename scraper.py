@@ -1,4 +1,5 @@
 import hashlib
+import json
 import random
 import re
 import time
@@ -11,6 +12,10 @@ import requests
 from bs4 import BeautifulSoup
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+from candidate_guardrails import (
+    candidate_guardrail_rejection_reason,
+    detect_candidate_guardrail_flags,
+)
 from config import Config
 from db import init_db, is_site_seen, mark_site_seen, get_source_status, _extract_domain as _db_extract_domain, _normalize_url_for_seen as normalize_url
 from logger import logger, log_search_start, log_search_complete, log_site_scraped
@@ -102,8 +107,64 @@ def score_meh_vibe(title, snippet):
     # Small penalty for generic Shopify/Etsy-style domains
     if re.search(r'(myshopify\.com|etsy\.com|shopify\.com)', text):
         score -= 1
-    
+
     return max(0, min(10, score))  # Clamp to 0-10
+
+
+def _looks_like_product_path(path: str) -> bool:
+    safe_path = path.lower().strip()
+    if not safe_path or safe_path == "/":
+        return False
+    if any(token in safe_path for token in (
+        "/product", "/products/", "/item", "/items/", "/deal", "/deals/",
+        "/offer", "/sale", "/buy", "/shop/", "/daily-deal",
+    )):
+        return True
+    # Deeper URLs are more likely to be individual item pages than top-level home or category pages.
+    return safe_path.count("/") >= 2
+
+
+def _should_replace_candidate_link(original_url: str, candidate_url: str) -> bool:
+    if not original_url or not candidate_url or original_url == candidate_url:
+        return False
+    from urllib.parse import urlparse
+
+    if not original_url.startswith(("http://", "https://")):
+        original_url = "https://" + original_url
+    if not candidate_url.startswith(("http://", "https://")):
+        candidate_url = "https://" + candidate_url
+
+    orig_path = urlparse(original_url).path or "/"
+    cand_path = urlparse(candidate_url).path or "/"
+    if cand_path == orig_path:
+        return False
+    if orig_path in ("/", "") and cand_path not in ("/", ""):
+        return True
+    if _looks_like_product_path(cand_path) and not _looks_like_product_path(orig_path):
+        return True
+    if len(cand_path.strip("/").split("/")) > len(orig_path.strip("/").split("/")):
+        return True
+    return False
+
+
+def score_product_like(title: str, snippet: str, url: str) -> int:
+    """Score search results for product-detail signals that match daily-deal pages."""
+    score = 0
+    text = f"{title} {snippet} {url}".lower()
+
+    if re.search(r'\$\s?\d', text) or re.search(r'£\s?\d', text) or re.search(r'€\s?\d', text):
+        score += 2
+
+    if re.search(r'\b(add to cart|buy now|shop now|order now|price|product|item)\b', text):
+        score += 1
+
+    if re.search(r'\b(headphones|laptop|smartwatch|camera|tablet|tv|speaker|shoes|sneakers|backpack|watch|phone)\b', text):
+        score += 1
+
+    if any(token in url.lower() for token in ("/product", "/products/", "/item", "sku", "buy")):
+        score += 1
+
+    return min(score, 5)
 
 # Domains that consistently return false positives: social platforms, review
 # aggregators, tutorial blogs, plugin directories, and messaging apps.
@@ -190,6 +251,19 @@ def _normalize_force_domains(force_domains) -> frozenset[str]:
     return frozenset(normalized)
 
 
+def _extract_serper_results(data: dict) -> list[dict]:
+    """Extract organic search results from Serper response payload."""
+    if not isinstance(data, dict):
+        return []
+    if data.get('organic') is not None:
+        return data.get('organic') or []
+    if data.get('organic_results') is not None:
+        return data.get('organic_results') or []
+    if data.get('items') is not None:
+        return data.get('items') or []
+    return []
+
+
 def get_last_search_diagnostics() -> dict:
     """Return the most recent search diagnostics snapshot."""
     diagnostics = dict(_LAST_SEARCH_DIAGNOSTICS)
@@ -271,6 +345,9 @@ def search_for_deal_sites(force_domains: frozenset = frozenset()):
     drop_reasons: Counter[str] = Counter()
     query_candidates: dict[str, int] = {}
     query_borderline_candidates: dict[str, int] = {}
+    query_product_like_candidates: dict[str, int] = {}
+    product_like_candidates = 0
+    product_like_borderline_candidates = 0
     rejection_samples: list[dict] = []
     rejection_sample_keys: set[tuple[str, str]] = set()
     diagnostics = {
@@ -300,6 +377,8 @@ def search_for_deal_sites(force_domains: frozenset = frozenset()):
         query_borderline_results = []
         query_samples: list[dict] = []
         query_sample_keys: set[tuple[str, str]] = set()
+        query_product_like_candidates: Counter[str] = Counter()
+        query_product_like_borderline_candidates: Counter[str] = Counter()
         payload = {"q": query, "num": Config.SEARCH_RESULTS_PER_QUERY, "gl": "us", "hl": "en"}
         try:
             response = requests.post("https://google.serper.dev/search", headers=headers, json=payload, timeout=10)
@@ -363,10 +442,29 @@ def search_for_deal_sites(force_domains: frozenset = frozenset()):
                 "rejection_samples": query_samples,
             }
 
+        if data.get("error") or data.get("message"):
+            logger.error(
+                "serper_response_error",
+                query=query,
+                error=str(data.get("error") or data.get("message")),
+                message=f"Serper returned error payload for '{query}'",
+            )
+            query_drop_reasons["serper_error_payload"] += 1
+            return {
+                "query": query,
+                "ok": False,
+                "raw_results": 0,
+                "results": [],
+                "borderline_results": [],
+                "drop_reasons": query_drop_reasons,
+                "rejection_samples": query_samples,
+            }
+
         results = []
-        organic = data.get('organic') or []
+        organic = _extract_serper_results(data)
         for result in organic:
-            url = result.get('link', '')
+            url = result.get('link') or result.get('url') or result.get('href') or ''
+            snippet = result.get('snippet') or result.get('description') or ''
             # Skip blocked domains before any scoring or DB lookup
             if _is_blocked_domain(url):
                 query_drop_reasons["blocked_domain"] += 1
@@ -392,20 +490,52 @@ def search_for_deal_sites(force_domains: frozenset = frozenset()):
                 )
                 continue
             
-            # Score Meh vibe
+            if not url:
+                query_drop_reasons["missing_url"] += 1
+                _append_rejection_sample(
+                    query_samples,
+                    query_sample_keys,
+                    reason="missing_url",
+                    query=query,
+                    result=result,
+                    limit=sample_limit,
+                )
+                continue
+
+            # Score Meh vibe and product-detail signals
             title = result.get('title', '')
-            snippet = result.get('snippet', '')
             vibe_score = score_meh_vibe(title, snippet)
+            product_like_score = score_product_like(title, snippet, url)
+            if product_like_score >= 3:
+                query_product_like_candidates[query] += 1
             candidate = {
                 'title': title,
                 'link': url,
                 'snippet': snippet,
                 'vibe_score': vibe_score,
+                'product_like_score': product_like_score,
                 'discovery_source': 'search',
                 'search_query': query,
             }
+            guardrail_flags = detect_candidate_guardrail_flags(candidate)
+            if guardrail_flags:
+                candidate["guardrail_flags"] = guardrail_flags
+            guardrail_reason = candidate_guardrail_rejection_reason(candidate, guardrail_flags)
+            if guardrail_reason:
+                guardrail_code = f"guardrail_{guardrail_flags[0]}"
+                query_drop_reasons[guardrail_code] += 1
+                _append_rejection_sample(
+                    query_samples,
+                    query_sample_keys,
+                    reason=guardrail_code,
+                    query=query,
+                    result=result,
+                    limit=sample_limit,
+                    vibe_score=vibe_score,
+                )
+                continue
             
-            # Only include if score >= threshold
+            # Prefer product-detail candidates even when raw vibe is borderline.
             if vibe_score >= strict_vibe_threshold:
                 results.append(candidate)
             elif vibe_score >= fallback_vibe_threshold:
@@ -415,6 +545,19 @@ def search_for_deal_sites(force_domains: frozenset = frozenset()):
                     query_samples,
                     query_sample_keys,
                     reason="borderline_vibe",
+                    query=query,
+                    result=result,
+                    limit=sample_limit,
+                    vibe_score=vibe_score,
+                )
+            elif product_like_score >= 3:
+                query_drop_reasons["product_like_borderline"] += 1
+                query_borderline_results.append(candidate)
+                query_product_like_borderline_candidates[query] += 1
+                _append_rejection_sample(
+                    query_samples,
+                    query_sample_keys,
+                    reason="product_like_borderline",
                     query=query,
                     result=result,
                     limit=sample_limit,
@@ -440,6 +583,9 @@ def search_for_deal_sites(force_domains: frozenset = frozenset()):
             "borderline_results": query_borderline_results,
             "drop_reasons": query_drop_reasons,
             "rejection_samples": query_samples,
+            "product_like_candidates": sum(query_product_like_candidates.values()),
+            "product_like_borderline_candidates": sum(query_product_like_borderline_candidates.values()),
+            "query_product_like_candidates": dict(query_product_like_candidates),
         }
     
     # Run all queries in parallel
@@ -458,6 +604,10 @@ def search_for_deal_sites(force_domains: frozenset = frozenset()):
                 drop_reasons.update(query_result["drop_reasons"])
                 all_results.extend(query_result["results"])
                 borderline_results.extend(query_result["borderline_results"])
+                product_like_candidates += query_result.get("product_like_candidates", 0)
+                product_like_borderline_candidates += query_result.get("product_like_borderline_candidates", 0)
+                for q, count in query_result.get("query_product_like_candidates", {}).items():
+                    query_product_like_candidates[q] = query_product_like_candidates.get(q, 0) + count
                 for sample in query_result["rejection_samples"]:
                     if len(rejection_samples) >= sample_limit:
                         break
@@ -552,6 +702,7 @@ def search_for_deal_sites(force_domains: frozenset = frozenset()):
                 'vibe_score': 7,
                 'discovery_source': 'seed',
                 'search_query': '',
+                'guardrail_flags': detect_candidate_guardrail_flags(seed),
                 'source_status': get_source_status(_db_extract_domain(url)),
                 'force_included': _db_extract_domain(url) in force_domains,
             }   # seeds get priority vibe score
@@ -588,6 +739,9 @@ def search_for_deal_sites(force_domains: frozenset = frozenset()):
         "low_yield_search": low_yield_search,
         "relaxed_vibe_threshold_used": relaxed_vibe_threshold_used,
         "promoted_borderline_candidates": promoted_borderline_candidates,
+        "product_like_candidates": product_like_candidates,
+        "product_like_promoted_candidates": product_like_borderline_candidates,
+        "query_product_like_candidates": query_product_like_candidates,
     })
     # Add a timestamp for this diagnostics snapshot
     diagnostics["search_ts"] = datetime.now(timezone.utc).isoformat()
@@ -680,9 +834,65 @@ def _extract_from_soup(soup: BeautifulSoup, url: str) -> dict:
     if price_el:
         price = (price_el.get("content") or price_el.get_text(strip=True) or "").strip()
     if not price:
+        el = soup.select_one("[data-price], [data-amount], [data-sale-price]")
+        if el:
+            val = el.get("data-price") or el.get("data-amount") or el.get("data-sale-price", "")
+            m = re.search(r"[0-9][0-9,]*(?:\.[0-9]{2})?", val)
+            if m:
+                price = f"${m.group(0)}"
+    if not price:
         m = re.search(r"\$\s*[0-9][0-9,]*(?:\.[0-9]{2})?", soup.get_text(" ", strip=True))
         if m:
             price = m.group(0).strip()
+
+    # ── Fallback 1: JSON-LD structured data ───────────────────────────────
+    if not price:
+        for script in soup.find_all("script", type="application/ld+json"):
+            try:
+                ld = json.loads(script.string or "")
+                items = ld if isinstance(ld, list) else [ld]
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    # Check the item itself and nested "offers"
+                    candidates = [item]
+                    offers = item.get("offers")
+                    if isinstance(offers, dict):
+                        candidates.append(offers)
+                    elif isinstance(offers, list):
+                        candidates.extend(o for o in offers if isinstance(o, dict))
+                    for obj in candidates:
+                        for key in ("price", "lowPrice"):
+                            val = obj.get(key)
+                            if val is not None:
+                                price = f"${val}" if not str(val).startswith("$") else str(val)
+                                break
+                        if price:
+                            break
+                    if price:
+                        break
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if price:
+                break
+
+    # ── Fallback 2: OpenGraph / meta price tags ───────────────────────────
+    if not price:
+        for prop in ("og:price:amount", "product:price:amount", "product:price"):
+            meta = soup.find("meta", property=prop) or soup.find("meta", attrs={"name": prop})
+            if meta and meta.get("content", "").strip():
+                val = meta["content"].strip()
+                price = f"${val}" if not val.startswith("$") else val
+                break
+
+    # ── Fallback 3: elements with "price" in class name ───────────────────
+    if not price:
+        for el in soup.find_all(class_=re.compile(r"price", re.I)):
+            txt = el.get_text(strip=True)
+            m = re.search(r"\$\s*[0-9][0-9,]*(?:\.[0-9]{2})?", txt)
+            if m:
+                price = m.group(0).strip()
+                break
 
     # ── Fix 2: original_price — strikethrough / compare-at patterns ──────────
     original_price = ""
@@ -694,6 +904,45 @@ def _extract_from_soup(soup: BeautifulSoup, url: str) -> dict:
             if re.search(r"[\$£€]?\s*[0-9]", t):   # must look like a price
                 original_price = re.sub(r"\s+", " ", t)[:80]
                 break
+    if not original_price:
+        for script in soup.find_all("script", type="application/ld+json"):
+            try:
+                ld = json.loads(script.string or "")
+                items = ld if isinstance(ld, list) else [ld]
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    offers = item.get("offers", item)
+                    objs = [offers] if isinstance(offers, dict) else (offers if isinstance(offers, list) else [])
+                    for obj in objs:
+                        if not isinstance(obj, dict):
+                            continue
+                        val = obj.get("highPrice")
+                        if val:
+                            original_price = f"${val}" if not str(val).startswith("$") else str(val)
+                            break
+                    if original_price:
+                        break
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if original_price:
+                break
+    if not original_price:
+        el = soup.select_one("[data-compare-price], [data-original-price], [data-compare-at-price]")
+        if el:
+            val = (el.get("data-compare-price") or el.get("data-original-price")
+                   or el.get("data-compare-at-price", ""))
+            m = re.search(r"[0-9][0-9,]*(?:\.[0-9]{2})?", val)
+            if m and float(m.group(0).replace(",", "")) > 0:
+                original_price = f"${m.group(0)}"
+    if not original_price:
+        body_text = (soup.find("main") or soup.body or soup).get_text(" ", strip=True)
+        m = re.search(
+            r"(?:was|msrp|retail|reg\.?|compare\s+at|list\s+price)[:\s]+[\$£€]?\s*([0-9][0-9,]*(?:\.[0-9]{2})?)",
+            body_text, re.I
+        )
+        if m:
+            original_price = f"${m.group(1)}"
     if not original_price:
         # Class-name patterns common on Shopify / WooCommerce / meh-style deal sites
         for css in (
@@ -727,6 +976,21 @@ def _extract_from_soup(soup: BeautifulSoup, url: str) -> dict:
         for tag in main_clean.find_all(["script", "style", "nav", "footer", "header", "aside"]):
             tag.decompose()
         promo = re.sub(r"\s+", " ", main_clean.get_text(" ", strip=True))[:2000]
+
+    # ── Last-resort original_price: second distinct higher $ amount ────────
+    if price and not original_price:
+        deal_val = None
+        m_deal = re.search(r"[0-9][0-9,]*(?:\.[0-9]{2})?", price)
+        if m_deal:
+            deal_val = float(m_deal.group(0).replace(",", ""))
+        if deal_val is not None:
+            body_text = (soup.find("main") or soup.body or soup).get_text(" ", strip=True)
+            all_prices = re.findall(r"\$\s*([0-9][0-9,]*(?:\.[0-9]{2})?)", body_text)
+            for p_str in all_prices:
+                val = float(p_str.replace(",", ""))
+                if val > deal_val:
+                    original_price = f"${p_str}"
+                    break
 
     signals = _collect_meh_signals(f"{title} {promo} {price}")
     return {
@@ -770,8 +1034,8 @@ def _goto_with_retries(page, url: str) -> None:
     last_err: Exception | None = None
     for attempt in range(2):
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=35000)
-            time.sleep(random.uniform(0.35, 1.25))
+            page.goto(url, wait_until="load", timeout=45000)
+            page.wait_for_timeout(random.randint(2500, 3500))
             return
         except Exception as e:
             last_err = e
@@ -794,6 +1058,22 @@ def _extract_from_playwright_page(page, url: str) -> dict:
     _goto_with_retries(page, url)
     _humanize_page_interaction(page)
 
+    pw_price = ""
+    pw_orig_price = ""
+    try:
+        pw_price = page.evaluate("""() => {
+            const sel = '[itemprop="price"], [data-price], [data-sale-price], .price__current, .product__price';
+            const el = document.querySelector(sel);
+            return el ? (el.getAttribute('content') || el.textContent || '').trim() : '';
+        }""") or ""
+        pw_orig_price = page.evaluate("""() => {
+            const sel = 'del, s, [data-compare-price], [data-original-price], .compare-at-price, .was-price';
+            const el = document.querySelector(sel);
+            return el ? el.textContent.trim() : '';
+        }""") or ""
+    except Exception:
+        pass
+
     deal_title = ""
     try:
         deal_title = re.sub(r"\s+", " ", page.locator("h1").first.inner_text(timeout=3000)).strip()[:500]
@@ -807,6 +1087,22 @@ def _extract_from_playwright_page(page, url: str) -> dict:
     parsed = _extract_from_soup(soup, url)
     if deal_title:
         parsed["deal_title"] = deal_title
+    if pw_price and not parsed.get("deal_price"):
+        m = re.search(r"[\$£€]?\s*[0-9][0-9,]*(?:\.[0-9]{2})?", pw_price)
+        if m:
+            parsed["deal_price"] = m.group(0).strip()
+    if pw_orig_price and not parsed.get("original_price"):
+        m = re.search(r"[\$£€]?\s*[0-9][0-9,]*(?:\.[0-9]{2})?", pw_orig_price)
+        if m:
+            parsed["original_price"] = m.group(0).strip()
+
+    parsed["final_url"] = page.url
+    canonical = soup.select_one("link[rel='canonical']")
+    if canonical and canonical.get("href"):
+        parsed["canonical_url"] = canonical["href"].strip()
+    og_url = soup.select_one("meta[property='og:url']")
+    if og_url and og_url.get("content"):
+        parsed["og_url"] = og_url["content"].strip()
 
     a11y_hints: list[str] = []
     try:
@@ -864,6 +1160,13 @@ def scrape_deal_page_requests(url: str) -> dict:
         data["screenshot_path"] = ""
         data["scrape_method"] = "requests"
         data["scrape_error"] = ""
+        data["final_url"] = resp.url
+        canonical = soup.select_one("link[rel='canonical']")
+        if canonical and canonical.get("href"):
+            data["canonical_url"] = canonical["href"].strip()
+        og_url = soup.select_one("meta[property='og:url']")
+        if og_url and og_url.get("content"):
+            data["og_url"] = og_url["content"].strip()
         logger.info("deal_page_http_ok", "HTTP scrape OK", url=url, has_title=bool(data.get("deal_title")))
         return data
     except Exception as e:
@@ -970,6 +1273,9 @@ def enrich_candidates(sites: list[dict]) -> list[dict]:
                         finally:
                             page.close()
                             context.close()
+                        final_url = extra.get("final_url") or extra.get("canonical_url") or extra.get("og_url")
+                        if final_url and _should_replace_candidate_link(url, final_url):
+                            site = {**site, "link": final_url}
                         enriched.append({**site, **extra})
                     except Exception as e:
                         logger.error("enrich_site_failed", url=url, error=str(e), message=str(e))

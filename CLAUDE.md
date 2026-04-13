@@ -40,8 +40,7 @@ meh-scanner/
 See .env.example
 
 ## Rules
-- Skip preambles. Output only code or requested answer.
 - Edit files surgically, never rewrite entire file.
 - Limit to max 25 candidates per daily run.
 - Test each module before moving on.
-- Use Gemini subagent for any analysis of multiple files.
+- Use Agent tool for analysis of multiple files.
