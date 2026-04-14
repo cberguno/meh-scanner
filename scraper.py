@@ -251,6 +251,10 @@ _BLOCKED_DOMAINS = frozenset({
     "tiktok.com", "shop.tiktok.com", "soundcloud.com",
     "youtube.com", "twitter.com", "x.com", "linkedin.com",
     "pinterest.com", "wa.me", "whatsapp.com",
+    "lemon8-app.com",                # short-form lifestyle posts tagged "flash sale"
+    "threads.net",                   # Meta short-form posts
+    "bsky.app",                      # Bluesky posts
+    "mastodon.social",               # Mastodon posts
     # Review / trust aggregators
     "trustpilot.com", "hellopeter.com", "yelp.com", "g2.com",
     "capterra.com", "sitejabber.com",
@@ -597,7 +601,7 @@ def search_for_deal_sites(force_domains: frozenset = frozenset()):
                 candidate["guardrail_flags"] = guardrail_flags
             guardrail_reason = candidate_guardrail_rejection_reason(candidate, guardrail_flags)
             if guardrail_reason:
-                guardrail_code = f"guardrail_{guardrail_flags[0]}"
+                guardrail_code = f"guardrail_{guardrail_reason}"
                 query_drop_reasons[guardrail_code] += 1
                 _append_rejection_sample(
                     query_samples,
@@ -764,6 +768,10 @@ def search_for_deal_sites(force_domains: frozenset = frozenset()):
     unique_results = normal + quarantined
 
     # ── Inject seed sites (known-good US deal sites) ─────────────────────────
+    # Seeds are the authoritative entry for their domain. If live search also
+    # surfaced a deeper path on the same registrable domain (e.g. a category or
+    # permalink page), drop the search-derived entries so the seed homepage is
+    # the single representative and we don't waste LLM analysis on duplicates.
     seed_seen = {normalize_url(r['link']) for r in unique_results}
     for seed in Config.SEED_DEAL_SITES:
         url = seed['link']
@@ -772,14 +780,33 @@ def search_for_deal_sites(force_domains: frozenset = frozenset()):
             continue
         normalized_seed = normalize_url(url)
         if normalized_seed not in seed_seen:
+            seed_domain = _db_extract_domain(url)
+            # Drop any non-seed search entries on the same registrable domain
+            if seed_domain:
+                conflicting = [
+                    r for r in unique_results
+                    if r.get('discovery_source') != 'seed'
+                    and _db_extract_domain(r.get('link', '')) == seed_domain
+                ]
+                if conflicting:
+                    drop_reasons["seed_domain_conflict"] += len(conflicting)
+                    unique_results = [
+                        r for r in unique_results
+                        if not (
+                            r.get('discovery_source') != 'seed'
+                            and _db_extract_domain(r.get('link', '')) == seed_domain
+                        )
+                    ]
+                    # Recompute the URL-dedup set to reflect the pruned list
+                    seed_seen = {normalize_url(r['link']) for r in unique_results}
             seed_entry = {
                 **seed,
                 'vibe_score': 7,
                 'discovery_source': 'seed',
                 'search_query': '',
                 'guardrail_flags': detect_candidate_guardrail_flags(seed),
-                'source_status': get_source_status(_db_extract_domain(url)),
-                'force_included': _db_extract_domain(url) in force_domains,
+                'source_status': get_source_status(seed_domain),
+                'force_included': seed_domain in force_domains,
             }   # seeds get priority vibe score
             unique_results.insert(0, seed_entry)       # seeds go to front of queue
             seed_seen.add(normalized_seed)

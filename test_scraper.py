@@ -268,7 +268,9 @@ def test_search_keeps_rejection_samples_in_diagnostics(monkeypatch: pytest.Monke
                 "organic": [
                     {
                         "title": "List of deal sites",
-                        "link": "https://blog.example.com/post",
+                        # Use a clean path that passes guardrails so the only
+                        # rejection reason is the forced low vibe score.
+                        "link": "https://example.com/somewhere",
                         "snippet": "An article about the best deal sites",
                     }
                 ]
@@ -283,3 +285,168 @@ def test_search_keeps_rejection_samples_in_diagnostics(monkeypatch: pytest.Monke
     diagnostics = scraper.get_last_search_diagnostics()
     assert diagnostics["rejection_samples"]
     assert diagnostics["rejection_samples"][0]["reason"] == "low_vibe"
+
+
+# ── guardrail tests ──────────────────────────────────────────────────────────
+
+import candidate_guardrails as cg
+
+
+def test_guardrail_flags_forum_host_and_path():
+    flags = cg.detect_candidate_guardrail_flags(
+        {"link": "https://forums.spiralknights.com/en/node/124775"}
+    )
+    assert "forum_host" in flags
+    assert "forum_path" in flags
+    assert cg.candidate_guardrail_rejection_reason({}, flags) == "forum_host"
+
+
+def test_guardrail_flags_support_page():
+    flags = cg.detect_candidate_guardrail_flags(
+        {"link": "https://peachyplannerdeals.com/faq/"}
+    )
+    assert flags == ["support_page"]
+    assert cg.candidate_guardrail_rejection_reason({}, flags) == "support_page"
+
+
+def test_guardrail_flags_social_profile():
+    flags = cg.detect_candidate_guardrail_flags(
+        {
+            "link": "https://www.lemon8-app.com/@artistry_by_ashlee/7471406069572010542?region=us"
+        }
+    )
+    assert "social_profile" in flags
+    assert cg.candidate_guardrail_rejection_reason({}, flags) == "social_profile"
+
+
+def test_guardrail_flags_article_path_dated_permalink():
+    flags = cg.detect_candidate_guardrail_flags(
+        {"link": "https://example.com/2024/08/15/cool-post"}
+    )
+    assert "article_path" in flags
+    assert cg.candidate_guardrail_rejection_reason({}, flags) == "article_path"
+
+
+def test_guardrail_flags_article_path_blog_prefix():
+    flags = cg.detect_candidate_guardrail_flags(
+        {"link": "https://store.example.com/blogs/news/some-post"}
+    )
+    assert "article_path" in flags
+
+
+def test_guardrail_long_slug_is_informational_only():
+    # A product slug with 8+ hyphen tokens should flag but NOT be rejected.
+    flags = cg.detect_candidate_guardrail_flags(
+        {
+            "link": "https://www.thatdailydeal.com/moon-lamp-with-16-color-options-and-remote-control-ships-free"
+        }
+    )
+    assert flags == ["long_slug"]
+    assert cg.candidate_guardrail_rejection_reason({}, flags) is None
+
+
+def test_guardrail_homepage_is_clean():
+    assert cg.detect_candidate_guardrail_flags({"link": "https://meh.com"}) == []
+    assert cg.detect_candidate_guardrail_flags({"link": "https://meh.com/"}) == []
+
+
+def test_guardrail_product_path_is_clean():
+    # Classic daily-deal product path shape — must NOT trigger any guardrail.
+    assert (
+        cg.detect_candidate_guardrail_flags(
+            {"link": "https://www.yugster.com/deal/12345"}
+        )
+        == []
+    )
+
+
+def test_search_drops_forum_candidate_via_guardrail(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    configure_search_env(monkeypatch, queries=["forum-junk"])
+
+    def fake_post(*args, **kwargs):
+        return DummyResponse(
+            200,
+            {
+                "organic": [
+                    {
+                        "title": "One Deal a Day",
+                        "link": "https://forums.example.com/threads/42",
+                        "snippet": "today only limited time",
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(scraper.requests, "post", fake_post)
+
+    results = scraper.search_for_deal_sites()
+
+    assert results == []
+    diagnostics = scraper.get_last_search_diagnostics()
+    # drop_reason code is ``guardrail_<reason>`` — reason is the first rejecting flag
+    assert any(
+        code.startswith("guardrail_forum")
+        for code in diagnostics["drop_reasons"].keys()
+    )
+
+
+def test_seed_injection_prunes_same_domain_search_results(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Live search returns a deeper path on the same domain as a seed homepage.
+    # Expected: seed wins, search result is dropped via seed_domain_conflict.
+    configure_search_env(
+        monkeypatch,
+        queries=["dupe"],
+        seeds=[
+            {
+                "title": "13 Deals",
+                "link": "https://www.13deals.com",
+                "snippet": "Daily deals flash sale",
+            }
+        ],
+    )
+
+    def fake_post(*args, **kwargs):
+        return make_candidate_response(
+            "https://www.13deals.com/store/categories/105-seasonal"
+        )
+
+    monkeypatch.setattr(scraper.requests, "post", fake_post)
+
+    results = scraper.search_for_deal_sites()
+
+    # Only the seed homepage remains, not the deeper search result.
+    assert [r["link"] for r in results] == ["https://www.13deals.com"]
+    assert results[0]["discovery_source"] == "seed"
+    diagnostics = scraper.get_last_search_diagnostics()
+    assert diagnostics["drop_reasons"].get("seed_domain_conflict") == 1
+
+
+def test_lemon8_domain_is_blocked_before_scoring(monkeypatch: pytest.MonkeyPatch):
+    configure_search_env(monkeypatch, queries=["social-junk"])
+
+    def fake_post(*args, **kwargs):
+        return DummyResponse(
+            200,
+            {
+                "organic": [
+                    {
+                        "title": "Flash Sale",
+                        "link": "https://www.lemon8-app.com/@handle/123",
+                        "snippet": "flash sale 25 off today only",
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(scraper.requests, "post", fake_post)
+
+    results = scraper.search_for_deal_sites()
+
+    assert results == []
+    diagnostics = scraper.get_last_search_diagnostics()
+    # Domain block runs BEFORE guardrails/scoring — drop reason is blocked_domain
+    assert diagnostics["drop_reasons"].get("blocked_domain") == 1
